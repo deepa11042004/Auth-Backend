@@ -1,15 +1,15 @@
-const jwt = require('jsonwebtoken');
+const { verifyToken } = require('../utils/jwt');
 
 function authMiddleware(req, res, next) {
   try {
     const authHeader = req.headers.authorization || '';
     const [scheme, token] = authHeader.split(' ');
 
-    if (!token || scheme !== 'Bearer') {
+    if (!token || scheme?.toLowerCase() !== 'bearer') {
       return res.status(401).json({ message: 'Authorization token required' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = verifyToken(token);
     req.user = decoded;
     return next();
   } catch (err) {

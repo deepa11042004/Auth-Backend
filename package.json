@@ -2,9 +2,9 @@
   "name": "auth-backend",
   "version": "1.0.0",
   "description": "Simple Express login API",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
