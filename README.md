@@ -25,6 +25,7 @@ npm install
 npm start
 ```
 Server starts on `http://localhost:5000` by default.
+Or use api `https://auth-backend-auld.onrender.com`
 
 ## Database Schema (users table)
 ```
