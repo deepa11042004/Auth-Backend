@@ -16,8 +16,17 @@ async function start() {
     connection.release();
     console.log('MySQL Connected');
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
+    });
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Port ${PORT} is already in use. Stop the running process or change PORT in .env.`);
+      } else {
+        console.error('Server listen error:', err);
+      }
+      process.exit(1);
     });
   } catch (err) {
     console.error('Startup error:', err);
