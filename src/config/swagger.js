@@ -31,6 +31,10 @@ const options = {
         name: 'Auth',
         description: 'Authentication and user account endpoints',
       },
+      {
+        name: 'Courses',
+        description: 'LMS course, curriculum, and enrollment endpoints',
+      },
     ],
   },
   apis: ['./src/routes/*.js'],
