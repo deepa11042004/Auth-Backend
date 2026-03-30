@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const roles = require('../constants/roles');
+const { hashPassword } = require('../utils/hashPassword');
 
 const REGISTRATION_TABLE = 'workshop_registrations';
 const WORKSHOP_TABLE = 'workshop_list';
@@ -147,6 +149,26 @@ async function registerForWorkshop(input) {
         };
       }
       throw err;
+    }
+
+    const [existingUsers] = await connection.query(
+      'SELECT id FROM users WHERE email = ? LIMIT 1',
+      [email]
+    );
+
+    if (!existingUsers[0]) {
+      const hashedPassword = await hashPassword(contactNumber);
+
+      try {
+        await connection.query(
+          'INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)',
+          [fullName, email, hashedPassword, roles.USER]
+        );
+      } catch (err) {
+        if (err.code !== 'ER_DUP_ENTRY') {
+          throw err;
+        }
+      }
     }
 
     await connection.commit();

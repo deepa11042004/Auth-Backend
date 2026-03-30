@@ -17,6 +17,9 @@ Node.js + Express backend with JWT authentication and LMS course APIs using MySQ
   - create section
   - create lecture
   - enroll in course
+- Workshop APIs:
+  - workshop enrollment
+  - workshop list creation
 - Swagger docs at runtime
 - Role-based authorization
 - Two database pools
@@ -44,6 +47,8 @@ Two pools are used:
 ### 3.1 Tables Used
 bserc_core_db:
 - users
+- workshop_list
+- workshop_registrations
 
 lms_core_db:
 - courses
@@ -781,7 +786,137 @@ Auth errors:
 Server error:
 - 500 { "message": "Internal server error" }
 
-## 10. Common Status Codes in This Project
+## 10. Workshop API Details
+Base path: /api
+
+---
+
+### 10.1 Workshop Enrollment
+Method and path:
+- POST /api/workshop/enrollment
+
+Auth required:
+- No
+
+Request body:
+- full_name (required string)
+- email (required valid email)
+- contact_number (required string)
+- alternative_email (optional valid email)
+- institution (required string)
+- designation (required enum: Student, Faculty, Professional)
+- agree_recording (required boolean true)
+- agree_terms (required boolean true)
+
+Current behavior:
+- workshop_id is currently fixed to 1 inside service logic.
+- Inserts registration data into workshop_registrations.
+- If registration succeeds, it checks users table by email.
+- If user does not exist, creates user in users table with:
+  - full_name from request
+  - email from request
+  - password = hashed contact_number (bcrypt)
+  - role = user
+- All DB steps run in a single transaction.
+
+Example request:
+```json
+{
+  "full_name": "Rahul Sharma",
+  "email": "rahul.sharma@example.com",
+  "contact_number": "9876543210",
+  "alternative_email": "rahul.alt@example.com",
+  "institution": "XYZ University",
+  "designation": "Student",
+  "agree_recording": true,
+  "agree_terms": true
+}
+```
+
+Success response:
+- 201
+```json
+{
+  "message": "Workshop registration successful",
+  "registration": {
+    "workshop_id": 1,
+    "email": "rahul.sharma@example.com"
+  }
+}
+```
+
+Validation/business errors:
+- 400 { "message": "full_name, email, contact_number, institution and designation are required" }
+- 400 { "message": "Invalid email format" }
+- 400 { "message": "Invalid alternative_email format" }
+- 400 { "message": "designation must be Student, Faculty, or Professional" }
+- 400 { "message": "agree_recording and agree_terms must be true" }
+- 404 { "message": "Workshop not found" }
+- 409 { "message": "You have already registered for this workshop" }
+
+Server error:
+- 500 { "message": "Internal server error" }
+
+---
+
+### 10.2 Create Workshop List Entry
+Method and path:
+- POST /api/workshop-list/create
+
+Auth required:
+- No
+
+Request body:
+- title (required string)
+- description (optional string)
+- eligibility (optional string)
+- mode (optional string)
+- workshop_date (optional string, format YYYY-MM-DD)
+- start_time (optional string, format HH:MM:SS)
+- end_time (optional string, format HH:MM:SS)
+- duration (optional string)
+- certificate (optional boolean, defaults to true)
+- fee (optional numeric)
+- thumbnail_url (optional valid URL or path)
+- certificate_url (optional valid URL or path)
+
+Example request:
+```json
+{
+  "title": "Advanced AI Workshop",
+  "description": "Hands-on workshop on practical AI use cases",
+  "eligibility": "Students and professionals",
+  "mode": "Online",
+  "workshop_date": "2026-04-20",
+  "start_time": "10:00:00",
+  "end_time": "13:00:00",
+  "duration": "3 hours",
+  "certificate": true,
+  "fee": 290,
+  "thumbnail_url": "/images/workshops/advanced-ai.png",
+  "certificate_url": "/certificates/advanced-ai-template.pdf"
+}
+```
+
+Success response:
+- 201
+```json
+{
+  "success": true,
+  "message": "Workshop created successfully"
+}
+```
+
+Validation or database error response:
+- 400/500
+```json
+{
+  "success": false,
+  "message": "Failed to create workshop"
+}
+```
+
+## 11. Common Status Codes in This Project
 - 200 OK
 - 201 Created
 - 400 Bad Request
@@ -791,7 +926,26 @@ Server error:
 - 409 Conflict
 - 500 Internal Server Error
 
-## 11. Recommended End-to-End Test Flow
+## 12. Complete Endpoint Index
+- GET /
+- GET /api-docs
+- GET /api-docs.json
+- POST /auth/register
+- POST /auth/login
+- POST /auth/change-password
+- GET /auth/profile
+- GET /auth/admin-only
+- GET /auth/instructor-only
+- GET /api/courses
+- GET /api/courses/:slug
+- POST /api/courses
+- POST /api/sections
+- POST /api/lectures
+- POST /api/enroll
+- POST /api/workshop/enrollment
+- POST /api/workshop-list/create
+
+## 13. Recommended End-to-End Test Flow
 1. Register a user.
 2. Login and copy token.
 3. Call profile with token.
@@ -801,8 +955,10 @@ Server error:
 7. Fetch /api/courses.
 8. Fetch /api/courses/:slug.
 9. Enroll with a learner token.
+10. Create workshop list entry with /api/workshop-list/create.
+11. Register workshop participant with /api/workshop/enrollment.
 
-## 12. Notes
+## 14. Notes
 - Passwords are hashed with bcrypt (salt rounds = 10).
 - Auth and LMS APIs are mounted in app as:
   - /auth
