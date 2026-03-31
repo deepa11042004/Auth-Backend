@@ -3,8 +3,13 @@ const db = require('../config/db');
 const WORKSHOP_LIST_TABLE = 'workshop_list';
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
+const IMAGE_COLUMNS = new Set(['thumbnail', 'certificate_file']);
 
 function cleanText(value) {
+  if (Array.isArray(value)) {
+    return typeof value[0] === 'string' ? value[0].trim() : '';
+  }
+
   return typeof value === 'string' ? value.trim() : '';
 }
 
@@ -41,6 +46,14 @@ function toBoolean(value, defaultValue = true) {
 
   const normalized = cleanText(value).toLowerCase();
   return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+function toPositiveInt(value) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+  return parsed;
 }
 
 function isValidDate(value) {
@@ -113,6 +126,10 @@ async function createWorkshop(payload) {
   const fee = toNullableFee(payload.fee);
   const thumbnailUrl = toNullableText(payload.thumbnail_url);
   const certificateUrl = toNullableText(payload.certificate_url);
+  const thumbnailBuffer = Buffer.isBuffer(payload.thumbnail) ? payload.thumbnail : null;
+  const certificateBuffer = Buffer.isBuffer(payload.certificate_file)
+    ? payload.certificate_file
+    : null;
 
   if (!title) {
     return failedResponse(400);
@@ -130,7 +147,18 @@ async function createWorkshop(payload) {
     return failedResponse(400);
   }
 
-  if (!isValidUrlOrPath(thumbnailUrl) || !isValidUrlOrPath(certificateUrl)) {
+  const thumbnailUrlValid = isValidUrlOrPath(thumbnailUrl);
+  const certificateUrlValid = isValidUrlOrPath(certificateUrl);
+  const storedThumbnailUrl = thumbnailBuffer ? (thumbnailUrlValid ? thumbnailUrl : null) : thumbnailUrl;
+  const storedCertificateUrl = certificateBuffer
+    ? (certificateUrlValid ? certificateUrl : null)
+    : certificateUrl;
+
+  if (!thumbnailBuffer && !thumbnailUrlValid) {
+    return failedResponse(400);
+  }
+
+  if (!certificateBuffer && !certificateUrlValid) {
     return failedResponse(400);
   }
 
@@ -147,8 +175,10 @@ async function createWorkshop(payload) {
       certificate,
       fee,
       thumbnail_url,
-      certificate_url
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      thumbnail,
+      certificate_url,
+      certificate_file
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       title,
       description,
@@ -160,8 +190,10 @@ async function createWorkshop(payload) {
       duration,
       certificate,
       fee,
-      thumbnailUrl,
-      certificateUrl,
+      storedThumbnailUrl,
+      thumbnailBuffer,
+      storedCertificateUrl,
+      certificateBuffer,
     ]
   );
 
@@ -174,6 +206,44 @@ async function createWorkshop(payload) {
   };
 }
 
+async function getWorkshopImageById(workshopId, column) {
+  if (!IMAGE_COLUMNS.has(column)) {
+    throw new Error(`Unsupported workshop image column: ${column}`);
+  }
+
+  const id = toPositiveInt(workshopId);
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid workshop id',
+      },
+    };
+  }
+
+  const [rows] = await db.query(
+    `SELECT ${column} AS image FROM ${WORKSHOP_LIST_TABLE} WHERE id = ? LIMIT 1`,
+    [id]
+  );
+
+  if (!rows[0] || !rows[0].image) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Workshop image not found',
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    image: rows[0].image,
+  };
+}
+
 module.exports = {
   createWorkshop,
+  getWorkshopImageById,
 };
