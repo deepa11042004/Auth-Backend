@@ -6,6 +6,30 @@ const router = express.Router();
 
 /**
  * @openapi
+ * /api/workshop-list:
+ *   get:
+ *     tags: [Workshops]
+ *     summary: Fetch complete workshop list
+ *     responses:
+ *       200:
+ *         description: Workshop list fetched successfully
+ */
+router.get('/workshop-list', workshopListController.getWorkshopList);
+
+/**
+ * @openapi
+ * /api/workshop-list/list:
+ *   get:
+ *     tags: [Workshops]
+ *     summary: Fetch complete workshop list (alias)
+ *     responses:
+ *       200:
+ *         description: Workshop list fetched successfully
+ */
+router.get('/workshop-list/list', workshopListController.getWorkshopList);
+
+/**
+ * @openapi
  * /api/workshop-list/create:
  *   post:
  *     tags: [Workshops]

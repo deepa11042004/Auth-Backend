@@ -1,6 +1,19 @@
 const workshopListService = require('../services/workshopListService');
 const { processImageToWebp } = require('../utils/imageProcessing');
 
+async function getWorkshopList(req, res) {
+  try {
+    const workshops = await workshopListService.getWorkshopList();
+    return res.status(200).json(workshops);
+  } catch (err) {
+    console.error('Workshop list fetch error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch workshop list',
+    });
+  }
+}
+
 async function createWorkshop(req, res) {
   try {
     const payload = { ...(req.body || {}) };
@@ -80,6 +93,7 @@ async function getWorkshopCertificate(req, res) {
 }
 
 module.exports = {
+  getWorkshopList,
   createWorkshop,
   getWorkshopThumbnail,
   getWorkshopCertificate,

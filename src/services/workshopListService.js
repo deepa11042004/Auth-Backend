@@ -113,6 +113,85 @@ function failedResponse(status) {
   };
 }
 
+function formatDate(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString().split('T')[0];
+  }
+
+  const asString = String(value).trim();
+  return asString || null;
+}
+
+function formatTime(value) {
+  if (!value) {
+    return null;
+  }
+
+  const asString = String(value).trim();
+  return asString || null;
+}
+
+function buildWorkshopImageUrl(id, type) {
+  return `/api/workshop-list/${id}/${type}`;
+}
+
+function mapWorkshopRow(row) {
+  const id = Number(row.id);
+  const thumbnailUrl = row.thumbnail_url
+    ? String(row.thumbnail_url)
+    : (row.thumbnail ? buildWorkshopImageUrl(id, 'thumbnail') : null);
+  const certificateUrl = row.certificate_url
+    ? String(row.certificate_url)
+    : (row.certificate_file ? buildWorkshopImageUrl(id, 'certificate') : null);
+
+  return {
+    id,
+    title: row.title,
+    description: row.description,
+    eligibility: row.eligibility,
+    mode: row.mode,
+    workshop_date: formatDate(row.workshop_date),
+    start_time: formatTime(row.start_time),
+    end_time: formatTime(row.end_time),
+    duration: row.duration,
+    certificate: Number(row.certificate || 0) === 1,
+    fee: row.fee === null ? null : Number(row.fee),
+    thumbnail_url: thumbnailUrl,
+    certificate_url: certificateUrl,
+    has_thumbnail: Boolean(row.thumbnail),
+    has_certificate_file: Boolean(row.certificate_file),
+  };
+}
+
+async function getWorkshopList() {
+  const [rows] = await db.query(
+    `SELECT
+      id,
+      title,
+      description,
+      eligibility,
+      mode,
+      workshop_date,
+      start_time,
+      end_time,
+      duration,
+      certificate,
+      fee,
+      thumbnail_url,
+      thumbnail,
+      certificate_url,
+      certificate_file
+    FROM ${WORKSHOP_LIST_TABLE}
+    ORDER BY id DESC`
+  );
+
+  return rows.map(mapWorkshopRow);
+}
+
 async function createWorkshop(payload) {
   const title = cleanText(payload.title);
   const description = toNullableText(payload.description);
@@ -244,6 +323,7 @@ async function getWorkshopImageById(workshopId, column) {
 }
 
 module.exports = {
+  getWorkshopList,
   createWorkshop,
   getWorkshopImageById,
 };
