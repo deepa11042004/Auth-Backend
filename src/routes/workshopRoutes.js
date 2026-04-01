@@ -55,5 +55,7 @@ const router = express.Router();
  *         description: Duplicate workshop registration
  */
 router.post('/workshop/enrollment', workshopRegistrationController.registerForWorkshop);
+router.post('/workshop/enrollment/create-order', workshopRegistrationController.createPaymentOrder);
+router.post('/workshop/enrollment/verify-payment', workshopRegistrationController.verifyPaymentAndRegister);
 
 module.exports = router;
