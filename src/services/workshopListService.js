@@ -1,6 +1,7 @@
 const db = require('../config/db');
 
 const WORKSHOP_LIST_TABLE = 'workshop_list';
+const REGISTRATION_TABLE = 'workshop_registrations';
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 const IMAGE_COLUMNS = new Set(['thumbnail', 'certificate_file']);
@@ -147,6 +148,7 @@ function mapWorkshopRow(row) {
   const certificateUrl = row.certificate_url
     ? String(row.certificate_url)
     : (row.certificate_file ? buildWorkshopImageUrl(id, 'certificate') : null);
+  const registeredCount = Number(row.registered_count);
 
   return {
     id,
@@ -160,6 +162,7 @@ function mapWorkshopRow(row) {
     duration: row.duration,
     certificate: Number(row.certificate || 0) === 1,
     fee: row.fee === null ? null : Number(row.fee),
+    registered_count: Number.isFinite(registeredCount) ? registeredCount : 0,
     thumbnail_url: thumbnailUrl,
     certificate_url: certificateUrl,
     has_thumbnail: Boolean(row.thumbnail),
@@ -170,23 +173,29 @@ function mapWorkshopRow(row) {
 async function getWorkshopList() {
   const [rows] = await db.query(
     `SELECT
-      id,
-      title,
-      description,
-      eligibility,
-      mode,
-      workshop_date,
-      start_time,
-      end_time,
-      duration,
-      certificate,
-      fee,
-      thumbnail_url,
-      thumbnail,
-      certificate_url,
-      certificate_file
-    FROM ${WORKSHOP_LIST_TABLE}
-    ORDER BY id DESC`
+      wl.id,
+      wl.title,
+      wl.description,
+      wl.eligibility,
+      wl.mode,
+      wl.workshop_date,
+      wl.start_time,
+      wl.end_time,
+      wl.duration,
+      wl.certificate,
+      wl.fee,
+      wl.thumbnail_url,
+      wl.thumbnail,
+      wl.certificate_url,
+      wl.certificate_file,
+      COALESCE(reg.registration_count, 0) AS registered_count
+    FROM ${WORKSHOP_LIST_TABLE} wl
+    LEFT JOIN (
+      SELECT workshop_id, COUNT(*) AS registration_count
+      FROM ${REGISTRATION_TABLE}
+      GROUP BY workshop_id
+    ) reg ON reg.workshop_id = wl.id
+    ORDER BY wl.id DESC`
   );
 
   return rows.map(mapWorkshopRow);
