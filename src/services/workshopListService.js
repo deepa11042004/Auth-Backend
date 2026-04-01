@@ -1,7 +1,7 @@
 const db = require('../config/db');
 
 const WORKSHOP_LIST_TABLE = 'workshop_list';
-const REGISTRATION_TABLE = 'workshop_registrations';
+const TOTAL_ENROLLMENTS_COLUMN = 'total_enrollments';
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 const IMAGE_COLUMNS = new Set(['thumbnail', 'certificate_file']);
@@ -170,9 +170,8 @@ function mapWorkshopRow(row) {
   };
 }
 
-async function getWorkshopList() {
-  const [rows] = await db.query(
-    `SELECT
+function buildWorkshopListQuery(registeredCountExpression) {
+  return `SELECT
       wl.id,
       wl.title,
       wl.description,
@@ -188,17 +187,27 @@ async function getWorkshopList() {
       wl.thumbnail,
       wl.certificate_url,
       wl.certificate_file,
-      COALESCE(reg.registration_count, 0) AS registered_count
+      ${registeredCountExpression} AS registered_count
     FROM ${WORKSHOP_LIST_TABLE} wl
-    LEFT JOIN (
-      SELECT workshop_id, COUNT(*) AS registration_count
-      FROM ${REGISTRATION_TABLE}
-      GROUP BY workshop_id
-    ) reg ON reg.workshop_id = wl.id
-    ORDER BY wl.id DESC`
-  );
+    ORDER BY wl.id DESC`;
+}
 
-  return rows.map(mapWorkshopRow);
+async function getWorkshopList() {
+  try {
+    const [rows] = await db.query(
+      buildWorkshopListQuery(`COALESCE(wl.${TOTAL_ENROLLMENTS_COLUMN}, 0)`)
+    );
+
+    return rows.map(mapWorkshopRow);
+  } catch (err) {
+    // If migration is not yet applied, return 0 so existing features keep working.
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      const [rows] = await db.query(buildWorkshopListQuery('0'));
+      return rows.map(mapWorkshopRow);
+    }
+
+    throw err;
+  }
 }
 
 async function createWorkshop(payload) {

@@ -7,6 +7,7 @@ const { hashPassword } = require('../utils/hashPassword');
 
 const REGISTRATION_TABLE = 'workshop_registrations';
 const WORKSHOP_TABLE = 'workshop_list';
+const TOTAL_ENROLLMENTS_COLUMN = 'total_enrollments';
 const DEFAULT_WORKSHOP_ID = 1;
 const PAYMENT_CURRENCY = 'INR';
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
@@ -179,6 +180,24 @@ async function hasExistingRegistration(workshopId, email, connection = db) {
   );
 
   return Boolean(rows[0]);
+}
+
+async function incrementWorkshopEnrollmentCounter(connection, workshopId) {
+  try {
+    await connection.query(
+      `UPDATE ${WORKSHOP_TABLE}
+       SET ${TOTAL_ENROLLMENTS_COLUMN} = COALESCE(${TOTAL_ENROLLMENTS_COLUMN}, 0) + 1
+       WHERE id = ?`,
+      [workshopId]
+    );
+  } catch (err) {
+    // Keep registration functional before the migration is applied.
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      return;
+    }
+
+    throw err;
+  }
 }
 
 async function createPaymentOrder(input) {
@@ -532,6 +551,8 @@ async function registerForWorkshop(input) {
       }
       throw err;
     }
+
+    await incrementWorkshopEnrollmentCounter(connection, workshopId);
 
     const [existingUsers] = await connection.query(
       'SELECT id FROM users WHERE email = ? LIMIT 1',
