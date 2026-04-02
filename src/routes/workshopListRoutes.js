@@ -15,6 +15,7 @@ const router = express.Router();
  *         description: Workshop list fetched successfully
  */
 router.get('/workshop-list', workshopListController.getWorkshopList);
+router.get('/workshop-list/participants', workshopListController.getAllParticipants);
 
 /**
  * @openapi
@@ -114,6 +115,8 @@ router.get('/workshop-list/list', workshopListController.getWorkshopList);
  */
 router.post('/workshop-list/create', uploadWorkshopImages, workshopListController.createWorkshop);
 
+router.get('/workshop-list/:id/participants', workshopListController.getWorkshopParticipants);
+
 /**
  * @openapi
  * /api/workshop-list/{id}/thumbnail:
@@ -159,5 +162,9 @@ router.get('/workshop-list/:id/thumbnail', workshopListController.getWorkshopThu
  *               format: binary
  */
 router.get('/workshop-list/:id/certificate', workshopListController.getWorkshopCertificate);
+
+router.get('/workshop-list/:id', workshopListController.getWorkshopById);
+router.put('/workshop-list/:id', uploadWorkshopImages, workshopListController.updateWorkshop);
+router.delete('/workshop-list/:id', workshopListController.deleteWorkshop);
 
 module.exports = router;

@@ -2,6 +2,7 @@ const db = require('../config/db');
 
 const WORKSHOP_LIST_TABLE = 'workshop_list';
 const TOTAL_ENROLLMENTS_COLUMN = 'total_enrollments';
+const REGISTRATION_TABLE = 'workshop_registrations';
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
 const IMAGE_COLUMNS = new Set(['thumbnail', 'certificate_file']);
@@ -136,6 +137,19 @@ function formatTime(value) {
   return asString || null;
 }
 
+function formatDateTime(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  const asString = String(value).trim();
+  return asString || null;
+}
+
 function buildWorkshopImageUrl(id, type) {
   return `/api/workshop-list/${id}/${type}`;
 }
@@ -192,6 +206,70 @@ function buildWorkshopListQuery(registeredCountExpression) {
     ORDER BY wl.id DESC`;
 }
 
+function buildWorkshopByIdQuery(registeredCountExpression) {
+  return `SELECT
+      wl.id,
+      wl.title,
+      wl.description,
+      wl.eligibility,
+      wl.mode,
+      wl.workshop_date,
+      wl.start_time,
+      wl.end_time,
+      wl.duration,
+      wl.certificate,
+      wl.fee,
+      wl.thumbnail_url,
+      wl.thumbnail,
+      wl.certificate_url,
+      wl.certificate_file,
+      ${registeredCountExpression} AS registered_count
+    FROM ${WORKSHOP_LIST_TABLE} wl
+    WHERE wl.id = ?
+    LIMIT 1`;
+}
+
+function buildAllParticipantsQuery(includeCreatedAt = true) {
+  const createdAtExpression = includeCreatedAt ? 'wr.created_at' : 'NULL AS created_at';
+  const createdAtUnixExpression = includeCreatedAt
+    ? 'UNIX_TIMESTAMP(wr.created_at) AS created_at_unix'
+    : 'NULL AS created_at_unix';
+  const orderByExpression = includeCreatedAt ? 'wr.created_at DESC, wr.id DESC' : 'wr.id DESC';
+
+  return `SELECT
+      wr.id,
+      wr.workshop_id,
+      wr.full_name,
+      wr.email,
+      wr.contact_number,
+      wr.institution,
+      wr.designation,
+      wl.title AS workshop_title,
+      ${createdAtExpression},
+      ${createdAtUnixExpression}
+    FROM ${REGISTRATION_TABLE} wr
+    LEFT JOIN ${WORKSHOP_LIST_TABLE} wl ON wl.id = wr.workshop_id
+    ORDER BY ${orderByExpression}`;
+}
+
+async function getWorkshopRowById(id, connection = db) {
+  try {
+    const [rows] = await connection.query(
+      buildWorkshopByIdQuery(`COALESCE(wl.${TOTAL_ENROLLMENTS_COLUMN}, 0)`),
+      [id]
+    );
+
+    return rows[0] || null;
+  } catch (err) {
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      const [rows] = await connection.query(buildWorkshopByIdQuery('0'), [id]);
+      return rows[0] || null;
+    }
+
+    throw err;
+  }
+}
+
 async function getWorkshopList() {
   try {
     const [rows] = await db.query(
@@ -208,6 +286,49 @@ async function getWorkshopList() {
 
     throw err;
   }
+}
+
+async function getAllParticipants() {
+  let rows = [];
+
+  try {
+    [rows] = await db.query(buildAllParticipantsQuery(true));
+  } catch (err) {
+    // Keep participant listing functional if created_at is unavailable in some environments.
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      [rows] = await db.query(buildAllParticipantsQuery(false));
+    } else {
+      throw err;
+    }
+  }
+
+  const participants = rows.map((row) => {
+    const workshopId = Number(row.workshop_id);
+    const createdAtUnix = Number(row.created_at_unix);
+
+    return {
+      id: Number(row.id),
+      workshop_id: Number.isFinite(workshopId) ? workshopId : null,
+      workshop_title: cleanText(row.workshop_title) || (Number.isFinite(workshopId) ? `Workshop ${workshopId}` : 'Workshop'),
+      full_name: cleanText(row.full_name),
+      email: cleanText(row.email),
+      contact_number: cleanText(row.contact_number),
+      institution: cleanText(row.institution),
+      designation: cleanText(row.designation),
+      created_at: formatDateTime(row.created_at),
+      created_at_unix: Number.isFinite(createdAtUnix) && createdAtUnix > 0
+        ? createdAtUnix
+        : null,
+    };
+  });
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      participants,
+    },
+  };
 }
 
 async function createWorkshop(payload) {
@@ -303,6 +424,327 @@ async function createWorkshop(payload) {
   };
 }
 
+async function getWorkshopById(workshopId) {
+  const id = toPositiveInt(workshopId);
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid workshop id',
+      },
+    };
+  }
+
+  const row = await getWorkshopRowById(id);
+  if (!row) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Workshop not found',
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: mapWorkshopRow(row),
+  };
+}
+
+async function updateWorkshop(workshopId, payload) {
+  const id = toPositiveInt(workshopId);
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid workshop id',
+      },
+    };
+  }
+
+  const existingRow = await getWorkshopRowById(id);
+  if (!existingRow) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Workshop not found',
+      },
+    };
+  }
+
+  const updates = [];
+  const values = [];
+
+  if (payload.title !== undefined) {
+    const title = cleanText(payload.title);
+    if (!title) {
+      return failedResponse(400);
+    }
+
+    updates.push('title = ?');
+    values.push(title);
+  }
+
+  if (payload.description !== undefined) {
+    updates.push('description = ?');
+    values.push(toNullableText(payload.description));
+  }
+
+  if (payload.eligibility !== undefined) {
+    updates.push('eligibility = ?');
+    values.push(toNullableText(payload.eligibility));
+  }
+
+  if (payload.mode !== undefined) {
+    updates.push('mode = ?');
+    values.push(toNullableText(payload.mode));
+  }
+
+  if (payload.workshop_date !== undefined) {
+    const workshopDate = toNullableText(payload.workshop_date);
+    if (!isValidDate(workshopDate)) {
+      return failedResponse(400);
+    }
+
+    updates.push('workshop_date = ?');
+    values.push(workshopDate);
+  }
+
+  if (payload.start_time !== undefined) {
+    const startTime = toNullableText(payload.start_time);
+    if (!isValidTime(startTime)) {
+      return failedResponse(400);
+    }
+
+    updates.push('start_time = ?');
+    values.push(startTime);
+  }
+
+  if (payload.end_time !== undefined) {
+    const endTime = toNullableText(payload.end_time);
+    if (!isValidTime(endTime)) {
+      return failedResponse(400);
+    }
+
+    updates.push('end_time = ?');
+    values.push(endTime);
+  }
+
+  if (payload.duration !== undefined) {
+    updates.push('duration = ?');
+    values.push(toNullableText(payload.duration));
+  }
+
+  if (payload.certificate !== undefined) {
+    updates.push('certificate = ?');
+    values.push(toBoolean(payload.certificate, true) ? 1 : 0);
+  }
+
+  if (payload.fee !== undefined) {
+    const fee = toNullableFee(payload.fee);
+    if (payload.fee !== null && payload.fee !== '' && fee === null) {
+      return failedResponse(400);
+    }
+
+    updates.push('fee = ?');
+    values.push(fee);
+  }
+
+  if (payload.thumbnail_url !== undefined) {
+    const thumbnailUrl = toNullableText(payload.thumbnail_url);
+    if (!isValidUrlOrPath(thumbnailUrl)) {
+      return failedResponse(400);
+    }
+
+    updates.push('thumbnail_url = ?');
+    values.push(thumbnailUrl);
+  }
+
+  if (payload.certificate_url !== undefined) {
+    const certificateUrl = toNullableText(payload.certificate_url);
+    if (!isValidUrlOrPath(certificateUrl)) {
+      return failedResponse(400);
+    }
+
+    updates.push('certificate_url = ?');
+    values.push(certificateUrl);
+  }
+
+  if (Buffer.isBuffer(payload.thumbnail)) {
+    updates.push('thumbnail = ?');
+    values.push(payload.thumbnail);
+  }
+
+  if (Buffer.isBuffer(payload.certificate_file)) {
+    updates.push('certificate_file = ?');
+    values.push(payload.certificate_file);
+  }
+
+  if (!updates.length) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'No update fields provided',
+      },
+    };
+  }
+
+  values.push(id);
+
+  await db.query(
+    `UPDATE ${WORKSHOP_LIST_TABLE}
+     SET ${updates.join(', ')}
+     WHERE id = ?`,
+    values
+  );
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Workshop updated successfully',
+    },
+  };
+}
+
+async function deleteWorkshop(workshopId) {
+  const id = toPositiveInt(workshopId);
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid workshop id',
+      },
+    };
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const workshopRow = await getWorkshopRowById(id, connection);
+    if (!workshopRow) {
+      await connection.rollback();
+      return {
+        status: 404,
+        body: {
+          success: false,
+          message: 'Workshop not found',
+        },
+      };
+    }
+
+    const [registrationDeleteResult] = await connection.query(
+      `DELETE FROM ${REGISTRATION_TABLE} WHERE workshop_id = ?`,
+      [id]
+    );
+
+    const [workshopDeleteResult] = await connection.query(
+      `DELETE FROM ${WORKSHOP_LIST_TABLE} WHERE id = ? LIMIT 1`,
+      [id]
+    );
+
+    if (!workshopDeleteResult.affectedRows) {
+      await connection.rollback();
+      return {
+        status: 404,
+        body: {
+          success: false,
+          message: 'Workshop not found',
+        },
+      };
+    }
+
+    await connection.commit();
+
+    return {
+      status: 200,
+      body: {
+        success: true,
+        message: 'Workshop deleted successfully',
+        deleted_registrations: Number(registrationDeleteResult.affectedRows || 0),
+      },
+    };
+  } catch (err) {
+    await connection.rollback();
+    throw err;
+  } finally {
+    connection.release();
+  }
+}
+
+async function getWorkshopParticipants(workshopId) {
+  const id = toPositiveInt(workshopId);
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid workshop id',
+      },
+    };
+  }
+
+  const workshopRow = await getWorkshopRowById(id);
+  if (!workshopRow) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Workshop not found',
+      },
+    };
+  }
+
+  const [rows] = await db.query(
+    `SELECT
+      id,
+      full_name,
+      email,
+      contact_number,
+      alternative_email,
+      institution,
+      designation,
+      agree_recording,
+      agree_terms
+     FROM ${REGISTRATION_TABLE}
+     WHERE workshop_id = ?
+     ORDER BY id DESC`,
+    [id]
+  );
+
+  const participants = rows.map((row) => ({
+    id: Number(row.id),
+    full_name: cleanText(row.full_name),
+    email: cleanText(row.email),
+    contact_number: cleanText(row.contact_number),
+    alternative_email: cleanText(row.alternative_email) || null,
+    institution: cleanText(row.institution),
+    designation: cleanText(row.designation),
+    agree_recording: Number(row.agree_recording || 0) === 1,
+    agree_terms: Number(row.agree_terms || 0) === 1,
+  }));
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      workshop: {
+        id: Number(workshopRow.id),
+        title: cleanText(workshopRow.title),
+      },
+      participants,
+    },
+  };
+}
+
 async function getWorkshopImageById(workshopId, column) {
   if (!IMAGE_COLUMNS.has(column)) {
     throw new Error(`Unsupported workshop image column: ${column}`);
@@ -342,6 +784,11 @@ async function getWorkshopImageById(workshopId, column) {
 
 module.exports = {
   getWorkshopList,
+  getAllParticipants,
+  getWorkshopById,
   createWorkshop,
+  updateWorkshop,
+  deleteWorkshop,
+  getWorkshopParticipants,
   getWorkshopImageById,
 };
