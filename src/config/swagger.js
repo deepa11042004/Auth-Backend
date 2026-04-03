@@ -39,6 +39,10 @@ const options = {
         name: 'Workshops',
         description: 'Workshop registration endpoints',
       },
+      {
+        name: 'Mentors',
+        description: 'Mentor registration and profile endpoints',
+      },
     ],
   },
   apis: ['./src/routes/*.js'],

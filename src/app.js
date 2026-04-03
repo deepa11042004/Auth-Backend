@@ -6,6 +6,7 @@ const authRoutes = require('./routes/authRoutes');
 const courseRoutes = require('./routes/courseRoutes');
 const workshopRoutes = require('./routes/workshopRoutes');
 const workshopListRoutes = require('./routes/workshopListRoutes');
+const mentorRoutes = require('./routes/mentorRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
 
@@ -29,6 +30,7 @@ app.use('/auth', authRoutes);
 app.use('/api', courseRoutes);
 app.use('/api', workshopRoutes);
 app.use('/api', workshopListRoutes);
+app.use('/api', mentorRoutes);
 
 app.use(errorHandler);
 
