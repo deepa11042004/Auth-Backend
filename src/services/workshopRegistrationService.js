@@ -26,6 +26,11 @@ function normalizeEmail(value) {
   return cleanText(value).toLowerCase();
 }
 
+function toNullableText(value) {
+  const cleaned = cleanText(value);
+  return cleaned || null;
+}
+
 function toBoolean(value) {
   if (typeof value === 'boolean') {
     return value;
@@ -83,6 +88,19 @@ function toMoneyInPaise(value) {
   }
 
   return Math.round(numeric * 100);
+}
+
+function toMoneyRupees(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+
+  return Math.round(numeric * 100) / 100;
 }
 
 function getRazorpayCredentials() {
@@ -193,6 +211,75 @@ async function incrementWorkshopEnrollmentCounter(connection, workshopId) {
   } catch (err) {
     // Keep registration functional before the migration is applied.
     if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      return;
+    }
+
+    throw err;
+  }
+}
+
+async function insertWorkshopRegistrationRecord(connection, payload) {
+  const baseValues = [
+    payload.workshopId,
+    payload.fullName,
+    payload.email,
+    payload.contactNumber,
+    payload.alternativeEmail,
+    payload.institution,
+    payload.designation,
+    payload.agreeRecording,
+    payload.agreeTerms,
+  ];
+
+  const valuesWithPayment = [
+    ...baseValues,
+    payload.paymentAmount,
+    payload.paymentCurrency,
+    payload.razorpayOrderId,
+    payload.razorpayPaymentId,
+    payload.paymentStatus,
+    payload.paymentMode,
+  ];
+
+  try {
+    await connection.query(
+      `INSERT INTO ${REGISTRATION_TABLE} (
+        workshop_id,
+        full_name,
+        email,
+        contact_number,
+        alternative_email,
+        institution,
+        designation,
+        agree_recording,
+        agree_terms,
+        payment_amount,
+        payment_currency,
+        razorpay_order_id,
+        razorpay_payment_id,
+        payment_status,
+        payment_mode
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      valuesWithPayment
+    );
+  } catch (err) {
+    // Keep registration functional before the payment-column migration is applied.
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      await connection.query(
+        `INSERT INTO ${REGISTRATION_TABLE} (
+          workshop_id,
+          full_name,
+          email,
+          contact_number,
+          alternative_email,
+          institution,
+          designation,
+          agree_recording,
+          agree_terms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        baseValues
+      );
+
       return;
     }
 
@@ -404,6 +491,12 @@ async function verifyPaymentAndRegister(input) {
   const registrationResult = await registerForWorkshop({
     ...input,
     workshop_id: workshopId,
+    payment_amount: Number(payment.amount) / 100,
+    payment_currency: cleanText(payment.currency) || PAYMENT_CURRENCY,
+    razorpay_order_id: orderId,
+    razorpay_payment_id: paymentId,
+    payment_status: cleanText(payment.status) || 'captured',
+    payment_mode: cleanText(payment.method),
   });
 
   if (registrationResult.status !== 201) {
@@ -417,9 +510,12 @@ async function verifyPaymentAndRegister(input) {
             email: normalizeEmail(input.email),
           },
           payment: {
+            amount: Number(payment.amount) / 100,
+            currency: cleanText(payment.currency) || PAYMENT_CURRENCY,
             razorpay_order_id: orderId,
             razorpay_payment_id: paymentId,
             status: payment.status,
+            mode: cleanText(payment.method) || null,
           },
         },
       };
@@ -434,9 +530,12 @@ async function verifyPaymentAndRegister(input) {
       message: 'Payment verified and workshop registration successful',
       registration: registrationResult.body.registration,
       payment: {
+        amount: Number(payment.amount) / 100,
+        currency: cleanText(payment.currency) || PAYMENT_CURRENCY,
         razorpay_order_id: orderId,
         razorpay_payment_id: paymentId,
         status: payment.status,
+        mode: cleanText(payment.method) || null,
       },
     },
   };
@@ -452,6 +551,12 @@ async function registerForWorkshop(input) {
   const agreeRecording = toBoolean(input.agree_recording);
   const agreeTerms = toBoolean(input.agree_terms);
   const workshopId = resolveWorkshopId(input || {});
+  const paymentAmount = toMoneyRupees(input.payment_amount);
+  const paymentCurrency = toNullableText(input.payment_currency)?.toUpperCase() || null;
+  const razorpayOrderId = toNullableText(input.razorpay_order_id);
+  const razorpayPaymentId = toNullableText(input.razorpay_payment_id);
+  const paymentStatus = toNullableText(input.payment_status)?.toLowerCase() || null;
+  const paymentMode = toNullableText(input.payment_mode);
 
   if (!workshopId) {
     return {
@@ -504,7 +609,7 @@ async function registerForWorkshop(input) {
     await connection.beginTransaction();
 
     const [workshopRows] = await connection.query(
-      `SELECT id FROM ${WORKSHOP_TABLE} WHERE id = ? LIMIT 1`,
+      `SELECT id, fee FROM ${WORKSHOP_TABLE} WHERE id = ? LIMIT 1`,
       [workshopId]
     );
 
@@ -516,31 +621,40 @@ async function registerForWorkshop(input) {
       };
     }
 
+    const workshopFeeRupees = toMoneyRupees(workshopRows[0].fee);
+    const hasPaymentIdentifiers = Boolean(razorpayOrderId || razorpayPaymentId);
+    const resolvedPaymentAmount =
+      paymentAmount !== null
+        ? paymentAmount
+        : workshopFeeRupees;
+    const resolvedPaymentCurrency =
+      paymentCurrency || (resolvedPaymentAmount !== null ? PAYMENT_CURRENCY : null);
+    const resolvedPaymentStatus =
+      paymentStatus
+      || (resolvedPaymentAmount === 0
+        ? 'not_required'
+        : (hasPaymentIdentifiers ? 'captured' : 'pending'));
+    const resolvedPaymentMode =
+      paymentMode || (resolvedPaymentAmount === 0 ? 'free' : null);
+
     try {
-      await connection.query(
-        `INSERT INTO ${REGISTRATION_TABLE} (
-          workshop_id,
-          full_name,
-          email,
-          contact_number,
-          alternative_email,
-          institution,
-          designation,
-          agree_recording,
-          agree_terms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          workshopId,
-          fullName,
-          email,
-          contactNumber,
-          alternativeEmail,
-          institution,
-          designation,
-          agreeRecording,
-          agreeTerms,
-        ]
-      );
+      await insertWorkshopRegistrationRecord(connection, {
+        workshopId,
+        fullName,
+        email,
+        contactNumber,
+        alternativeEmail,
+        institution,
+        designation,
+        agreeRecording,
+        agreeTerms,
+        paymentAmount: resolvedPaymentAmount,
+        paymentCurrency: resolvedPaymentCurrency,
+        razorpayOrderId,
+        razorpayPaymentId,
+        paymentStatus: resolvedPaymentStatus,
+        paymentMode: resolvedPaymentMode,
+      });
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
         await connection.rollback();
@@ -583,6 +697,14 @@ async function registerForWorkshop(input) {
         registration: {
           workshop_id: workshopId,
           email,
+          payment: {
+            amount: resolvedPaymentAmount,
+            currency: resolvedPaymentCurrency,
+            razorpay_order_id: razorpayOrderId,
+            razorpay_payment_id: razorpayPaymentId,
+            status: resolvedPaymentStatus,
+            mode: resolvedPaymentMode,
+          },
         },
       },
     };
