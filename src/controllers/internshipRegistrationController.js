@@ -1,0 +1,50 @@
+const internshipRegistrationService = require('../services/internshipRegistrationService');
+
+async function createPaymentOrder(req, res, next) {
+  try {
+    const result = await internshipRegistrationService.createPaymentOrder(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function verifyPaymentAndRegister(req, res, next) {
+  try {
+    const payload = { ...(req.body || {}) };
+
+    if (req.file?.buffer) {
+      payload.passport_photo = req.file.buffer;
+      payload.passport_photo_mime_type = req.file.mimetype;
+      payload.passport_photo_file_name = req.file.originalname;
+    }
+
+    const result = await internshipRegistrationService.verifyPaymentAndRegister(payload);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function registerWithoutPayment(req, res, next) {
+  try {
+    const payload = { ...(req.body || {}) };
+
+    if (req.file?.buffer) {
+      payload.passport_photo = req.file.buffer;
+      payload.passport_photo_mime_type = req.file.mimetype;
+      payload.passport_photo_file_name = req.file.originalname;
+    }
+
+    const result = await internshipRegistrationService.registerWithoutPayment(payload);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = {
+  createPaymentOrder,
+  verifyPaymentAndRegister,
+  registerWithoutPayment,
+};

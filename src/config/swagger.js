@@ -43,6 +43,10 @@ const options = {
         name: 'Mentors',
         description: 'Mentor registration and profile endpoints',
       },
+      {
+        name: 'Internships',
+        description: 'Summer internship application and payment endpoints',
+      },
     ],
   },
   apis: ['./src/routes/*.js'],
