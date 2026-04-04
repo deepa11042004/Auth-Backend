@@ -349,7 +349,7 @@ async function approveMentor(req, res) {
     if (result.outcome === 'status_column_missing') {
       return res.status(500).json({
         error:
-          "Mentor status is not configured. Apply migration: ALTER TABLE mentor_registrations ADD COLUMN status ENUM('pending', 'active') DEFAULT 'pending';",
+          "Mentor status is not configured for blocking. Apply migrations in docs/mentor-registrations-status-column.sql and docs/mentor-registrations-blocked-status.sql.",
       });
     }
 
@@ -377,6 +377,49 @@ async function approveMentor(req, res) {
   } catch (err) {
     console.error('Mentor approval error:', err);
     return res.status(500).json({ error: 'Failed to approve mentor' });
+  }
+}
+
+async function blockMentor(req, res) {
+  try {
+    const mentorId = parseMentorId(req.params.id);
+    if (!mentorId) {
+      return res.status(400).json({ error: 'Invalid mentor id.' });
+    }
+
+    const result = await mentorRegistrationService.blockMentorById(mentorId);
+
+    if (result.outcome === 'status_column_missing') {
+      return res.status(500).json({
+        error:
+          "Mentor status is not configured. Apply migration: ALTER TABLE mentor_registrations ADD COLUMN status ENUM('pending', 'active', 'blocked') DEFAULT 'pending';",
+      });
+    }
+
+    if (result.outcome === 'not_found') {
+      return res.status(404).json({ error: 'Mentor not found.' });
+    }
+
+    if (result.outcome === 'already_blocked') {
+      return res.status(409).json({
+        error: 'Mentor is already blocked.',
+        mentor: result.mentor || null,
+      });
+    }
+
+    if (result.outcome === 'invalid_status') {
+      return res.status(409).json({
+        error: `Mentor cannot be blocked from status: ${result.status}`,
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Mentor blocked successfully',
+      mentor: result.mentor || null,
+    });
+  } catch (err) {
+    console.error('Mentor block error:', err);
+    return res.status(500).json({ error: 'Failed to block mentor' });
   }
 }
 
@@ -410,5 +453,6 @@ module.exports = {
   getPendingMentors,
   getActiveMentors,
   approveMentor,
+  blockMentor,
   rejectMentor,
 };

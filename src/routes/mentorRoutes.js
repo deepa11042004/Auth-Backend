@@ -47,6 +47,7 @@ router.post('/mentor/register', uploadMentorRegistrationFiles, mentorRegistratio
 router.get('/mentor/requests', mentorRegistrationController.getPendingMentors);
 router.get('/mentor/list', mentorRegistrationController.getActiveMentors);
 router.patch('/mentor/:id/approve', mentorRegistrationController.approveMentor);
+router.patch('/mentor/:id/block', mentorRegistrationController.blockMentor);
 router.delete('/mentor/:id/reject', mentorRegistrationController.rejectMentor);
 
 router.get('/mentor/:id', mentorRegistrationController.getMentorById);
