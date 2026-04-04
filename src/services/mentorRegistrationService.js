@@ -4,12 +4,7 @@ const MENTOR_REGISTRATION_TABLE = 'mentor_registrations';
 const FILE_COLUMNS = new Set(['resume', 'profile_photo']);
 const MENTOR_STATUS_PENDING = 'pending';
 const MENTOR_STATUS_ACTIVE = 'active';
-const MENTOR_STATUS_BLOCKED = 'blocked';
-const VALID_MENTOR_STATUSES = new Set([
-  MENTOR_STATUS_PENDING,
-  MENTOR_STATUS_ACTIVE,
-  MENTOR_STATUS_BLOCKED,
-]);
+const VALID_MENTOR_STATUSES = new Set([MENTOR_STATUS_PENDING, MENTOR_STATUS_ACTIVE]);
 
 const MENTOR_DETAIL_COLUMNS = `
   id,
@@ -236,52 +231,7 @@ async function getMentorsByStatus(status) {
     }
 
     // Graceful fallback for pre-migration environments.
-    if (status === MENTOR_STATUS_ACTIVE || status === MENTOR_STATUS_BLOCKED) {
-      return [];
-    }
-
-    [rows] = await db.query(
-      `SELECT
-        ${MENTOR_DETAIL_COLUMNS}
-       FROM ${MENTOR_REGISTRATION_TABLE}
-       ORDER BY created_at DESC, id DESC`
-    );
-
-    rows = rows.map((row) => ({
-      ...row,
-      status: MENTOR_STATUS_PENDING,
-    }));
-  }
-
-  return rows.map(mapMentorDetails);
-}
-
-async function getMentorsByStatuses(statuses) {
-  const uniqueStatuses = [...new Set(statuses.filter((status) => VALID_MENTOR_STATUSES.has(status)))];
-
-  if (uniqueStatuses.length === 0) {
-    return [];
-  }
-
-  let rows;
-
-  try {
-    const placeholders = uniqueStatuses.map(() => '?').join(', ');
-    [rows] = await db.query(
-      `SELECT
-        ${MENTOR_DETAIL_COLUMNS},
-        status
-       FROM ${MENTOR_REGISTRATION_TABLE}
-       WHERE status IN (${placeholders})
-       ORDER BY created_at DESC, id DESC`,
-      uniqueStatuses
-    );
-  } catch (err) {
-    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
-      throw err;
-    }
-
-    if (!uniqueStatuses.includes(MENTOR_STATUS_PENDING)) {
+    if (status === MENTOR_STATUS_ACTIVE) {
       return [];
     }
 
@@ -302,7 +252,7 @@ async function getMentorsByStatuses(statuses) {
 }
 
 async function getPendingMentors() {
-  return getMentorsByStatuses([MENTOR_STATUS_PENDING, MENTOR_STATUS_BLOCKED]);
+  return getMentorsByStatus(MENTOR_STATUS_PENDING);
 }
 
 async function getActiveMentors() {
@@ -330,11 +280,7 @@ async function approveMentorById(id) {
       return { outcome: 'already_active', mentor };
     }
 
-    if (
-      currentStatus
-      && currentStatus !== MENTOR_STATUS_PENDING
-      && currentStatus !== MENTOR_STATUS_BLOCKED
-    ) {
+    if (currentStatus && currentStatus !== MENTOR_STATUS_PENDING) {
       return { outcome: 'invalid_status', status: currentStatus };
     }
 
@@ -349,64 +295,6 @@ async function approveMentorById(id) {
 
     return {
       outcome: 'approved',
-      mentor,
-    };
-  } catch (err) {
-    if (
-      err
-      && (
-        err.code === 'ER_BAD_FIELD_ERROR'
-        || err.code === 'WARN_DATA_TRUNCATED'
-        || err.code === 'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD'
-      )
-    ) {
-      return { outcome: 'status_column_missing' };
-    }
-
-    throw err;
-  }
-}
-
-async function blockMentorById(id) {
-  try {
-    const [rows] = await db.query(
-      `SELECT id, status
-       FROM ${MENTOR_REGISTRATION_TABLE}
-       WHERE id = ?
-       LIMIT 1`,
-      [id]
-    );
-
-    if (rows.length === 0) {
-      return { outcome: 'not_found' };
-    }
-
-    const currentStatus = String(rows[0].status || '').trim().toLowerCase();
-
-    if (currentStatus === MENTOR_STATUS_BLOCKED) {
-      const mentor = await getMentorById(id);
-      return { outcome: 'already_blocked', mentor };
-    }
-
-    if (
-      currentStatus
-      && currentStatus !== MENTOR_STATUS_ACTIVE
-      && currentStatus !== MENTOR_STATUS_PENDING
-    ) {
-      return { outcome: 'invalid_status', status: currentStatus };
-    }
-
-    await db.query(
-      `UPDATE ${MENTOR_REGISTRATION_TABLE}
-       SET status = ?
-       WHERE id = ?`,
-      [MENTOR_STATUS_BLOCKED, id]
-    );
-
-    const mentor = await getMentorById(id);
-
-    return {
-      outcome: 'blocked',
       mentor,
     };
   } catch (err) {
@@ -463,6 +351,5 @@ module.exports = {
   getPendingMentors,
   getActiveMentors,
   approveMentorById,
-  blockMentorById,
   rejectMentorById,
 };
