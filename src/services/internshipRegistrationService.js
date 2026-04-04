@@ -6,8 +6,10 @@ const roles = require('../constants/roles');
 const { hashPassword } = require('../utils/hashPassword');
 
 const INTERNSHIP_TABLE = 'summer_internship_registrations';
+const INTERNSHIP_FEE_SETTINGS_TABLE = 'summer_internship_fee_settings';
 const PAYMENT_CURRENCY = 'INR';
-const FIXED_INTERNSHIP_FEE_RUPEES = 100;
+const DEFAULT_GENERAL_INTERNSHIP_FEE_RUPEES = 100;
+const DEFAULT_LATERAL_INTERNSHIP_FEE_RUPEES = 100;
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
 const TRANSIENT_PAYMENT_STATUSES = new Set(['created', 'pending']);
 const PAYMENT_FETCH_RETRY_ATTEMPTS = 6;
@@ -59,8 +61,73 @@ function toMoneyInPaise(value) {
   return Math.round(numeric * 100);
 }
 
-function getInternshipFeeRupees() {
-  return FIXED_INTERNSHIP_FEE_RUPEES;
+function toFeeRupees(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return fallback;
+  }
+
+  return Number(numeric.toFixed(2));
+}
+
+function parseFeeRupeesInput(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+
+  return Number(numeric.toFixed(2));
+}
+
+async function ensureInternshipFeeSettingsSchema(connection = db) {
+  await connection.query(
+    `CREATE TABLE IF NOT EXISTS ${INTERNSHIP_FEE_SETTINGS_TABLE} (
+      id TINYINT PRIMARY KEY,
+      general_fee_rupees DECIMAL(10,2) NOT NULL DEFAULT 100.00,
+      lateral_fee_rupees DECIMAL(10,2) NOT NULL DEFAULT 100.00,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`
+  );
+
+  await connection.query(
+    `INSERT INTO ${INTERNSHIP_FEE_SETTINGS_TABLE} (id, general_fee_rupees, lateral_fee_rupees)
+     VALUES (1, ?, ?)
+     ON DUPLICATE KEY UPDATE id = id`,
+    [DEFAULT_GENERAL_INTERNSHIP_FEE_RUPEES, DEFAULT_LATERAL_INTERNSHIP_FEE_RUPEES]
+  );
+}
+
+async function readInternshipFeeSettings(connection = db) {
+  await ensureInternshipFeeSettingsSchema(connection);
+
+  const [rows] = await connection.query(
+    `SELECT general_fee_rupees, lateral_fee_rupees
+     FROM ${INTERNSHIP_FEE_SETTINGS_TABLE}
+     WHERE id = 1
+     LIMIT 1`
+  );
+
+  const row = rows[0] || {};
+
+  return {
+    general_fee_rupees: toFeeRupees(
+      row.general_fee_rupees,
+      DEFAULT_GENERAL_INTERNSHIP_FEE_RUPEES
+    ),
+    lateral_fee_rupees: toFeeRupees(
+      row.lateral_fee_rupees,
+      DEFAULT_LATERAL_INTERNSHIP_FEE_RUPEES
+    ),
+  };
+}
+
+function getApplicableInternshipFeeRupees(settings, isLateral) {
+  return isLateral ? settings.lateral_fee_rupees : settings.general_fee_rupees;
 }
 
 function isValidDateString(value) {
@@ -179,6 +246,7 @@ function normalizeRegistrationPayload(input) {
     pin_code: cleanText(input.pin_code),
     institution_name: cleanText(input.institution_name),
     educational_qualification: cleanText(input.educational_qualification),
+    is_lateral: toBoolean(input.is_lateral ?? input.isLateral ?? input.islateral),
     declaration_accepted: toBoolean(input.declaration_accepted),
     passport_photo: Buffer.isBuffer(input.passport_photo) ? input.passport_photo : null,
     passport_photo_mime_type: toNullableText(input.passport_photo_mime_type),
@@ -290,6 +358,7 @@ async function createInternshipRegistrationRecord(connection, payload, paymentIn
       pin_code,
       institution_name,
       educational_qualification,
+      is_lateral,
       declaration_accepted,
       passport_photo,
       passport_photo_mime_type,
@@ -299,7 +368,7 @@ async function createInternshipRegistrationRecord(connection, payload, paymentIn
       razorpay_order_id,
       razorpay_payment_id,
       payment_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       payload.internship_name,
       payload.internship_designation,
@@ -316,6 +385,7 @@ async function createInternshipRegistrationRecord(connection, payload, paymentIn
       payload.pin_code,
       payload.institution_name,
       payload.educational_qualification,
+      payload.is_lateral,
       payload.declaration_accepted,
       payload.passport_photo,
       payload.passport_photo_mime_type,
@@ -398,6 +468,7 @@ async function registerInternshipInternal(input, paymentInfo, options = {}) {
 
 async function createPaymentOrder(input) {
   const applicantEmail = normalizeEmail(input?.email);
+  const isLateral = toBoolean(input?.is_lateral ?? input?.isLateral ?? input?.islateral);
 
   if (!applicantEmail) {
     return {
@@ -426,13 +497,14 @@ async function createPaymentOrder(input) {
     };
   }
 
-  const internshipFeeRupees = getInternshipFeeRupees();
+  const feeSettings = await readInternshipFeeSettings();
+  const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral);
   const amountInPaise = toMoneyInPaise(internshipFeeRupees);
 
   if (amountInPaise === null) {
     return {
       status: 500,
-      body: { message: 'Invalid SUMMER_INTERNSHIP_FEE value in server config' },
+      body: { message: 'Invalid internship fee settings value' },
     };
   }
 
@@ -442,6 +514,7 @@ async function createPaymentOrder(input) {
       body: {
         requires_payment: false,
         amount: 0,
+        application_fee: internshipFeeRupees,
         currency: PAYMENT_CURRENCY,
       },
     };
@@ -478,6 +551,7 @@ async function createPaymentOrder(input) {
       amount: order.amount,
       currency: order.currency,
       application_fee: internshipFeeRupees,
+      is_lateral: isLateral,
     },
   };
 }
@@ -497,7 +571,9 @@ async function verifyPaymentAndRegister(input) {
     };
   }
 
-  const internshipFeeRupees = getInternshipFeeRupees();
+  const isLateral = toBoolean(input?.is_lateral ?? input?.isLateral ?? input?.islateral);
+  const feeSettings = await readInternshipFeeSettings();
+  const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral);
   const amountInPaise = toMoneyInPaise(internshipFeeRupees);
 
   if (amountInPaise === null || amountInPaise <= 0) {
@@ -612,13 +688,15 @@ async function verifyPaymentAndRegister(input) {
 }
 
 async function registerWithoutPayment(input) {
-  const internshipFeeRupees = getInternshipFeeRupees();
+  const isLateral = toBoolean(input?.is_lateral ?? input?.isLateral ?? input?.islateral);
+  const feeSettings = await readInternshipFeeSettings();
+  const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral);
   const amountInPaise = toMoneyInPaise(internshipFeeRupees);
 
   if (amountInPaise === null) {
     return {
       status: 500,
-      body: { message: 'Invalid SUMMER_INTERNSHIP_FEE value in server config' },
+      body: { message: 'Invalid internship fee settings value' },
     };
   }
 
@@ -654,6 +732,7 @@ function toNumberOrNull(value) {
 function mapInternshipApplicationRow(row) {
   return {
     ...row,
+    is_lateral: toBoolean(row.is_lateral),
     declaration_accepted: toBoolean(row.declaration_accepted),
     has_passport_photo: toBoolean(row.has_passport_photo),
     payment_amount: toNumberOrNull(row.payment_amount),
@@ -679,6 +758,7 @@ async function getInternshipRegistrations() {
       pin_code,
       institution_name,
       educational_qualification,
+      is_lateral,
       declaration_accepted,
       CASE WHEN passport_photo IS NULL THEN 0 ELSE 1 END AS has_passport_photo,
       passport_photo_mime_type,
@@ -702,9 +782,56 @@ async function getInternshipRegistrations() {
   };
 }
 
+async function getInternshipFeeSettings() {
+  const settings = await readInternshipFeeSettings();
+
+  return {
+    status: 200,
+    body: settings,
+  };
+}
+
+async function updateInternshipFeeSettings(input) {
+  const generalFee = parseFeeRupeesInput(
+    input?.general_fee_rupees ?? input?.generalFeeRupees ?? input?.general_fee
+  );
+  const lateralFee = parseFeeRupeesInput(
+    input?.lateral_fee_rupees ?? input?.lateralFeeRupees ?? input?.lateral_fee
+  );
+
+  if (generalFee === null || lateralFee === null) {
+    return {
+      status: 400,
+      body: {
+        message: 'general_fee_rupees and lateral_fee_rupees are required and must be non-negative numbers',
+      },
+    };
+  }
+
+  await ensureInternshipFeeSettingsSchema();
+
+  await db.query(
+    `UPDATE ${INTERNSHIP_FEE_SETTINGS_TABLE}
+     SET general_fee_rupees = ?, lateral_fee_rupees = ?
+     WHERE id = 1`,
+    [generalFee, lateralFee]
+  );
+
+  return {
+    status: 200,
+    body: {
+      message: 'Internship fee settings updated successfully',
+      general_fee_rupees: generalFee,
+      lateral_fee_rupees: lateralFee,
+    },
+  };
+}
+
 module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
   registerWithoutPayment,
   getInternshipRegistrations,
+  getInternshipFeeSettings,
+  updateInternshipFeeSettings,
 };

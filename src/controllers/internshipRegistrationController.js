@@ -52,9 +52,29 @@ async function getInternshipRegistrations(req, res, next) {
   }
 }
 
+async function getInternshipFeeSettings(req, res, next) {
+  try {
+    const result = await internshipRegistrationService.getInternshipFeeSettings();
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function updateInternshipFeeSettings(req, res, next) {
+  try {
+    const result = await internshipRegistrationService.updateInternshipFeeSettings(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
   registerWithoutPayment,
   getInternshipRegistrations,
+  getInternshipFeeSettings,
+  updateInternshipFeeSettings,
 };

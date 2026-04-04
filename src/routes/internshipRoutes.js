@@ -55,4 +55,24 @@ router.get(
   internshipRegistrationController.getInternshipRegistrations
 );
 
+/**
+ * @openapi
+ * /api/internship/registration/fee:
+ *   get:
+ *     tags: [Internships]
+ *     summary: Get configurable internship fees for general and lateral registration
+ *   put:
+ *     tags: [Internships]
+ *     summary: Update configurable internship fees for general and lateral registration
+ */
+router.get(
+  '/internship/registration/fee',
+  internshipRegistrationController.getInternshipFeeSettings
+);
+
+router.put(
+  '/internship/registration/fee',
+  internshipRegistrationController.updateInternshipFeeSettings
+);
+
 module.exports = router;

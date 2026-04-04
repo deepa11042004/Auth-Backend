@@ -20,6 +20,7 @@ CREATE TABLE summer_internship_registrations (
 
     institution_name VARCHAR(255) NOT NULL,
     educational_qualification VARCHAR(120) NOT NULL,
+    is_lateral BOOLEAN NOT NULL DEFAULT FALSE,
 
     declaration_accepted BOOLEAN NOT NULL DEFAULT FALSE,
 
