@@ -317,9 +317,98 @@ async function getMentorProfilePhoto(req, res) {
   });
 }
 
+async function getPendingMentors(req, res) {
+  try {
+    const mentors = await mentorRegistrationService.getPendingMentors();
+    return res.status(200).json({ mentors });
+  } catch (err) {
+    console.error('Pending mentors fetch error:', err);
+    return res.status(500).json({ error: 'Failed to fetch mentor requests' });
+  }
+}
+
+async function getActiveMentors(req, res) {
+  try {
+    const mentors = await mentorRegistrationService.getActiveMentors();
+    return res.status(200).json({ mentors });
+  } catch (err) {
+    console.error('Active mentors fetch error:', err);
+    return res.status(500).json({ error: 'Failed to fetch mentor list' });
+  }
+}
+
+async function approveMentor(req, res) {
+  try {
+    const mentorId = parseMentorId(req.params.id);
+    if (!mentorId) {
+      return res.status(400).json({ error: 'Invalid mentor id.' });
+    }
+
+    const result = await mentorRegistrationService.approveMentorById(mentorId);
+
+    if (result.outcome === 'status_column_missing') {
+      return res.status(500).json({
+        error:
+          "Mentor status is not configured. Apply migration: ALTER TABLE mentor_registrations ADD COLUMN status ENUM('pending', 'active') DEFAULT 'pending';",
+      });
+    }
+
+    if (result.outcome === 'not_found') {
+      return res.status(404).json({ error: 'Mentor not found.' });
+    }
+
+    if (result.outcome === 'already_active') {
+      return res.status(409).json({
+        error: 'Mentor is already active.',
+        mentor: result.mentor || null,
+      });
+    }
+
+    if (result.outcome === 'invalid_status') {
+      return res.status(409).json({
+        error: `Mentor cannot be approved from status: ${result.status}`,
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Mentor approved successfully',
+      mentor: result.mentor || null,
+    });
+  } catch (err) {
+    console.error('Mentor approval error:', err);
+    return res.status(500).json({ error: 'Failed to approve mentor' });
+  }
+}
+
+async function rejectMentor(req, res) {
+  try {
+    const mentorId = parseMentorId(req.params.id);
+    if (!mentorId) {
+      return res.status(400).json({ error: 'Invalid mentor id.' });
+    }
+
+    const result = await mentorRegistrationService.rejectMentorById(mentorId);
+
+    if (result.outcome === 'not_found') {
+      return res.status(404).json({ error: 'Mentor not found.' });
+    }
+
+    return res.status(200).json({
+      message: 'Mentor rejected and deleted successfully',
+    });
+  } catch (err) {
+    console.error('Mentor rejection error:', err);
+    return res.status(500).json({ error: 'Failed to reject mentor' });
+  }
+}
+
 module.exports = {
   registerMentor,
   getMentorById,
   getMentorResume,
   getMentorProfilePhoto,
+  getPendingMentors,
+  getActiveMentors,
+  approveMentor,
+  rejectMentor,
 };

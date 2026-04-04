@@ -43,8 +43,18 @@ async function registerWithoutPayment(req, res, next) {
   }
 }
 
+async function getInternshipRegistrations(req, res, next) {
+  try {
+    const result = await internshipRegistrationService.getInternshipRegistrations();
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
   registerWithoutPayment,
+  getInternshipRegistrations,
 };

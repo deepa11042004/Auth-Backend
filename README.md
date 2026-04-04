@@ -786,12 +786,12 @@ Auth errors:
 Server error:
 - 500 { "message": "Internal server error" }
 
-## 10. Workshop API Details
-Base path: /api
+## 10. Workshop Registration API Details
+Base path: /api/workshop/enrollment
 
 ---
 
-### 10.1 Workshop Enrollment
+### 10.1 Register Workshop Participant
 Method and path:
 - POST /api/workshop/enrollment
 
@@ -799,6 +799,7 @@ Auth required:
 - No
 
 Request body:
+- workshop_id or workshopId (optional positive integer, defaults to 1)
 - full_name (required string)
 - email (required valid email)
 - contact_number (required string)
@@ -808,30 +809,13 @@ Request body:
 - agree_recording (required boolean true)
 - agree_terms (required boolean true)
 
-Current behavior:
-- workshop_id is currently fixed to 1 inside service logic.
-- Inserts registration data into workshop_registrations.
-- If registration succeeds, it checks users table by email.
-- If user does not exist, creates user in users table with:
-  - full_name from request
-  - email from request
-  - password = hashed contact_number (bcrypt)
-  - role = user
-- All DB steps run in a single transaction.
-
-Example request:
-```json
-{
-  "full_name": "Rahul Sharma",
-  "email": "rahul.sharma@example.com",
-  "contact_number": "9876543210",
-  "alternative_email": "rahul.alt@example.com",
-  "institution": "XYZ University",
-  "designation": "Student",
-  "agree_recording": true,
-  "agree_terms": true
-}
-```
+Optional payment fields (typically used by payment-verified flows):
+- payment_amount
+- payment_currency
+- razorpay_order_id
+- razorpay_payment_id
+- payment_status
+- payment_mode
 
 Success response:
 - 201
@@ -840,12 +824,21 @@ Success response:
   "message": "Workshop registration successful",
   "registration": {
     "workshop_id": 1,
-    "email": "rahul.sharma@example.com"
+    "email": "rahul.sharma@example.com",
+    "payment": {
+      "amount": 290,
+      "currency": "INR",
+      "razorpay_order_id": null,
+      "razorpay_payment_id": null,
+      "status": "pending",
+      "mode": null
+    }
   }
 }
 ```
 
 Validation/business errors:
+- 400 { "message": "workshop_id is required and must be a positive integer" }
 - 400 { "message": "full_name, email, contact_number, institution and designation are required" }
 - 400 { "message": "Invalid email format" }
 - 400 { "message": "Invalid alternative_email format" }
@@ -859,44 +852,247 @@ Server error:
 
 ---
 
-### 10.2 Create Workshop List Entry
+### 10.2 Create Workshop Payment Order
+Method and path:
+- POST /api/workshop/enrollment/create-order
+
+Auth required:
+- No
+
+Request body:
+- workshop_id or workshopId (optional positive integer, defaults to 1)
+- email (optional valid email, used for duplicate check)
+
+Success response when payment required:
+- 201
+```json
+{
+  "requires_payment": true,
+  "key_id": "rzp_test_xxxxx",
+  "order_id": "order_xxxxx",
+  "amount": 29000,
+  "currency": "INR",
+  "workshop_id": 1,
+  "workshop_title": "Advanced AI Workshop"
+}
+```
+
+Success response when payment not required (free workshop):
+- 200
+```json
+{
+  "requires_payment": false,
+  "amount": 0,
+  "currency": "INR",
+  "workshop_id": 1,
+  "workshop_title": "Advanced AI Workshop"
+}
+```
+
+Success response when already registered:
+- 200
+```json
+{
+  "requires_payment": false,
+  "already_registered": true,
+  "amount": 0,
+  "currency": "INR",
+  "workshop_id": 1,
+  "workshop_title": "Advanced AI Workshop",
+  "message": "You have already registered for this workshop"
+}
+```
+
+Validation/business errors:
+- 400 { "message": "workshop_id is required and must be a positive integer" }
+- 400 { "message": "Invalid email format" }
+- 400 { "message": "Invalid workshop fee configured for this workshop" }
+- 404 { "message": "Workshop not found" }
+
+Server errors:
+- 500 { "message": "Razorpay credentials are missing on the server" }
+- 500 { "message": "Internal server error" }
+
+---
+
+### 10.3 Verify Workshop Payment and Register
+Method and path:
+- POST /api/workshop/enrollment/verify-payment
+
+Auth required:
+- No
+
+Request body (required):
+- workshop_id or workshopId (optional positive integer, defaults to 1)
+- razorpay_order_id
+- razorpay_payment_id
+- razorpay_signature
+- full_name
+- email
+- contact_number
+- institution
+- designation
+- agree_recording (true)
+- agree_terms (true)
+
+Success response:
+- 201
+```json
+{
+  "message": "Payment verified and workshop registration successful",
+  "registration": {
+    "workshop_id": 1,
+    "email": "rahul.sharma@example.com",
+    "payment": {
+      "amount": 290,
+      "currency": "INR",
+      "razorpay_order_id": "order_xxxxx",
+      "razorpay_payment_id": "pay_xxxxx",
+      "status": "captured",
+      "mode": "card"
+    }
+  },
+  "payment": {
+    "amount": 290,
+    "currency": "INR",
+    "razorpay_order_id": "order_xxxxx",
+    "razorpay_payment_id": "pay_xxxxx",
+    "status": "captured",
+    "mode": "card"
+  }
+}
+```
+
+Already-registered response:
+- 200
+```json
+{
+  "message": "Payment verified. You are already registered for this workshop"
+}
+```
+
+Validation/business errors:
+- 400 { "message": "workshop_id is required and must be a positive integer" }
+- 400 { "message": "razorpay_order_id, razorpay_payment_id, and razorpay_signature are required" }
+- 400 { "message": "Invalid payment signature" }
+- 400 { "message": "Unable to validate payment with Razorpay" }
+- 400 { "message": "Payment does not belong to this order" }
+- 400 { "message": "Paid amount does not match workshop fee" }
+- 400 { "message": "Payment is not successful yet (status: ... )" }
+- 400 { "message": "Payment is not required for this workshop" }
+- 400 { "message": "full_name, email, contact_number, institution and designation are required" }
+- 404 { "message": "Workshop not found" }
+
+Server errors:
+- 500 { "message": "Razorpay credentials are missing on the server" }
+- 500 { "message": "Internal server error" }
+
+## 11. Workshop List API Details
+Base path: /api/workshop-list
+
+---
+
+### 11.1 Get Workshop List
+Methods and paths:
+- GET /api/workshop-list
+- GET /api/workshop-list/list (alias)
+
+Auth required:
+- No
+
+Success response:
+- 200 (array)
+```json
+[
+  {
+    "id": 1,
+    "title": "Advanced AI Workshop",
+    "description": "Hands-on workshop",
+    "eligibility": "Students and professionals",
+    "mode": "Online",
+    "workshop_date": "2026-04-20",
+    "start_time": "10:00:00",
+    "end_time": "13:00:00",
+    "duration": "3 hours",
+    "certificate": true,
+    "fee": 290,
+    "registered_count": 12,
+    "thumbnail_url": "/api/workshop-list/1/thumbnail",
+    "certificate_url": "/api/workshop-list/1/certificate",
+    "has_thumbnail": true,
+    "has_certificate_file": true
+  }
+]
+```
+
+Server error:
+- 500 { "success": false, "message": "Failed to fetch workshop list" }
+
+---
+
+### 11.2 Get All Workshop Participants
+Method and path:
+- GET /api/workshop-list/participants
+
+Auth required:
+- No
+
+Success response:
+- 200
+```json
+{
+  "success": true,
+  "participants": [
+    {
+      "id": 10,
+      "workshop_id": 1,
+      "workshop_title": "Advanced AI Workshop",
+      "full_name": "Rahul Sharma",
+      "email": "rahul@example.com",
+      "contact_number": "9876543210",
+      "institution": "XYZ University",
+      "designation": "Student",
+      "created_at": "2026-04-04T10:30:00.000Z",
+      "created_at_unix": 1775298600
+    }
+  ]
+}
+```
+
+Server error:
+- 500 { "success": false, "message": "Failed to fetch participants list" }
+
+---
+
+### 11.3 Create Workshop
 Method and path:
 - POST /api/workshop-list/create
 
 Auth required:
 - No
 
-Request body:
+Supported content types:
+- application/json
+- multipart/form-data
+
+Request fields:
 - title (required string)
 - description (optional string)
 - eligibility (optional string)
 - mode (optional string)
-- workshop_date (optional string, format YYYY-MM-DD)
-- start_time (optional string, format HH:MM:SS)
-- end_time (optional string, format HH:MM:SS)
+- workshop_date (optional YYYY-MM-DD)
+- start_time (optional HH:MM:SS)
+- end_time (optional HH:MM:SS)
 - duration (optional string)
-- certificate (optional boolean, defaults to true)
-- fee (optional numeric)
-- thumbnail_url (optional valid URL or path)
-- certificate_url (optional valid URL or path)
+- certificate (optional boolean, default true)
+- fee (optional number)
+- thumbnail_url (optional valid URL/path)
+- certificate_url (optional valid URL/path)
 
-Example request:
-```json
-{
-  "title": "Advanced AI Workshop",
-  "description": "Hands-on workshop on practical AI use cases",
-  "eligibility": "Students and professionals",
-  "mode": "Online",
-  "workshop_date": "2026-04-20",
-  "start_time": "10:00:00",
-  "end_time": "13:00:00",
-  "duration": "3 hours",
-  "certificate": true,
-  "fee": 290,
-  "thumbnail_url": "/images/workshops/advanced-ai.png",
-  "certificate_url": "/certificates/advanced-ai-template.pdf"
-}
-```
+Optional upload fields (multipart/form-data):
+- thumbnail (jpg/png/webp, max 2MB)
+- certificate (jpg/png/webp, max 2MB)
+- certificate_file (alias of certificate, jpg/png/webp, max 2MB)
 
 Success response:
 - 201
@@ -907,16 +1103,641 @@ Success response:
 }
 ```
 
-Validation or database error response:
-- 400/500
+Validation/upload errors:
+- 400 { "success": false, "message": "Failed to create workshop" }
+- 400 { "success": false, "message": "Only image files (jpg, jpeg, png, webp) are allowed." }
+- 400 { "success": false, "message": "Unexpected file field. Use thumbnail or certificate (certificate_file alias allowed)." }
+- 400 { "success": false, "message": "Too many files uploaded. Provide at most one thumbnail and one certificate." }
+- 413 { "success": false, "message": "Image file too large. Max size is 2MB." }
+
+Server error:
+- 500 { "success": false, "message": "Failed to create workshop" }
+
+---
+
+### 11.4 Get Workshop By Id
+Method and path:
+- GET /api/workshop-list/:id
+
+Auth required:
+- No
+
+Success response:
+- 200 (single workshop object)
+
+Validation/business errors:
+- 400 { "success": false, "message": "Invalid workshop id" }
+- 404 { "success": false, "message": "Workshop not found" }
+
+Server error:
+- 500 { "success": false, "message": "Failed to fetch workshop" }
+
+---
+
+### 11.5 Update Workshop By Id
+Method and path:
+- PUT /api/workshop-list/:id
+
+Auth required:
+- No
+
+Supported content types:
+- application/json
+- multipart/form-data
+
+Behavior:
+- Partial update is supported.
+- At least one valid field must be provided.
+- Uses same validation rules as create endpoint.
+
+Success response:
+- 200
 ```json
 {
-  "success": false,
-  "message": "Failed to create workshop"
+  "success": true,
+  "message": "Workshop updated successfully"
 }
 ```
 
-## 11. Common Status Codes in This Project
+Validation/business errors:
+- 400 { "success": false, "message": "Invalid workshop id" }
+- 400 { "success": false, "message": "No update fields provided" }
+- 400 { "success": false, "message": "Failed to create workshop" }
+- 404 { "success": false, "message": "Workshop not found" }
+- 413 { "success": false, "message": "Image file too large. Max size is 2MB." }
+
+Server error:
+- 500 { "success": false, "message": "Failed to update workshop" }
+
+---
+
+### 11.6 Delete Workshop By Id
+Method and path:
+- DELETE /api/workshop-list/:id
+
+Auth required:
+- No
+
+Success response:
+- 200
+```json
+{
+  "success": true,
+  "message": "Workshop deleted successfully",
+  "deleted_registrations": 8
+}
+```
+
+Validation/business errors:
+- 400 { "success": false, "message": "Invalid workshop id" }
+- 404 { "success": false, "message": "Workshop not found" }
+
+Server error:
+- 500 { "success": false, "message": "Failed to delete workshop" }
+
+---
+
+### 11.7 Get Participants For One Workshop
+Method and path:
+- GET /api/workshop-list/:id/participants
+
+Auth required:
+- No
+
+Success response:
+- 200
+```json
+{
+  "success": true,
+  "workshop": {
+    "id": 1,
+    "title": "Advanced AI Workshop"
+  },
+  "participants": [
+    {
+      "id": 1,
+      "full_name": "Rahul Sharma",
+      "email": "rahul@example.com",
+      "contact_number": "9876543210",
+      "alternative_email": null,
+      "institution": "XYZ University",
+      "designation": "Student",
+      "agree_recording": true,
+      "agree_terms": true
+    }
+  ]
+}
+```
+
+Validation/business errors:
+- 400 { "success": false, "message": "Invalid workshop id" }
+- 404 { "success": false, "message": "Workshop not found" }
+
+Server error:
+- 500 { "success": false, "message": "Failed to fetch workshop participants" }
+
+---
+
+### 11.8 Get Workshop Thumbnail
+Method and path:
+- GET /api/workshop-list/:id/thumbnail
+
+Auth required:
+- No
+
+Success response:
+- 200 (Content-Type: image/webp, binary)
+
+Validation/business errors:
+- 400 { "success": false, "message": "Invalid workshop id" }
+- 404 { "success": false, "message": "Workshop image not found" }
+
+Server error:
+- 500 { "success": false, "message": "Failed to fetch workshop thumbnail" }
+
+---
+
+### 11.9 Get Workshop Certificate
+Method and path:
+- GET /api/workshop-list/:id/certificate
+
+Auth required:
+- No
+
+Success response:
+- 200 (Content-Type: image/webp, binary)
+
+Validation/business errors:
+- 400 { "success": false, "message": "Invalid workshop id" }
+- 404 { "success": false, "message": "Workshop image not found" }
+
+Server error:
+- 500 { "success": false, "message": "Failed to fetch workshop certificate" }
+
+## 12. Mentor API Details
+Base path: /api/mentor
+
+---
+
+### 12.1 Register Mentor
+Method and path:
+- POST /api/mentor/register
+
+Auth required:
+- No
+
+Supported content types:
+- application/json
+- multipart/form-data
+
+Required fields:
+- full_name
+- email
+- phone
+- dob (YYYY-MM-DD)
+
+Optional fields:
+- current_position
+- organization
+- years_experience (integer)
+- professional_bio
+- primary_track
+- secondary_skills
+- key_competencies
+- video_call (boolean)
+- phone_call (boolean)
+- live_chat (boolean)
+- email_support (boolean)
+- availability
+- max_students (integer)
+- session_duration
+- consultation_fee (number)
+- price_5_sessions (number)
+- price_10_sessions (number)
+- price_extended (number)
+- complimentary_session (boolean)
+- linkedin_url
+- portfolio_url
+- has_mentored_before (boolean)
+- mentoring_experience
+- accepted_guidelines (boolean)
+- accepted_code_of_conduct (boolean)
+
+Optional files (multipart/form-data):
+- resume (PDF/DOC/DOCX, max 5MB)
+- profile_photo (JPG/PNG/WEBP, max 5MB)
+
+Success response:
+- 201
+```json
+{
+  "message": "Mentor registered successfully"
+}
+```
+
+Validation/upload errors:
+- 400 { "error": "full_name is required." }
+- 400 { "error": "email format is invalid." }
+- 400 { "error": "dob must be a valid date in YYYY-MM-DD format." }
+- 400 { "error": "years_experience must be an integer." }
+- 400 { "error": "max_students must be an integer." }
+- 400 { "error": "consultation_fee must be a valid number." }
+- 400 { "error": "File too large. Max size is 5MB per file." }
+- 400 { "error": "Unexpected file field. Allowed fields are resume and profile_photo." }
+- 400 { "error": "Invalid resume file type. Use PDF, DOC, or DOCX." }
+- 400 { "error": "Invalid profile photo type. Use JPG, PNG, or WEBP image." }
+- 409 { "error": "Email already registered." }
+
+Server error:
+- 500 { "error": "Failed to register mentor" }
+
+---
+
+### 12.2 Get Pending Mentor Requests
+Method and path:
+- GET /api/mentor/requests
+
+Auth required:
+- No
+
+Success response:
+- 200
+```json
+{
+  "mentors": [
+    {
+      "id": 1,
+      "full_name": "Jane Mentor",
+      "email": "jane@example.com",
+      "status": "pending"
+    }
+  ]
+}
+```
+
+Server error:
+- 500 { "error": "Failed to fetch mentor requests" }
+
+---
+
+### 12.3 Get Active Mentor List
+Method and path:
+- GET /api/mentor/list
+
+Auth required:
+- No
+
+Success response:
+- 200
+```json
+{
+  "mentors": [
+    {
+      "id": 2,
+      "full_name": "John Mentor",
+      "email": "john@example.com",
+      "status": "active"
+    }
+  ]
+}
+```
+
+Server error:
+- 500 { "error": "Failed to fetch mentor list" }
+
+---
+
+### 12.4 Approve Mentor
+Method and path:
+- PATCH /api/mentor/:id/approve
+
+Auth required:
+- No
+
+Success response:
+- 200
+```json
+{
+  "message": "Mentor approved successfully",
+  "mentor": {
+    "id": 1,
+    "status": "active"
+  }
+}
+```
+
+Validation/business errors:
+- 400 { "error": "Invalid mentor id." }
+- 404 { "error": "Mentor not found." }
+- 409 { "error": "Mentor is already active." }
+- 409 { "error": "Mentor cannot be approved from status: ..." }
+
+Server errors:
+- 500 { "error": "Mentor status is not configured. Apply migration: ALTER TABLE mentor_registrations ADD COLUMN status ENUM('pending', 'active') DEFAULT 'pending';" }
+- 500 { "error": "Failed to approve mentor" }
+
+---
+
+### 12.5 Reject Mentor
+Method and path:
+- DELETE /api/mentor/:id/reject
+
+Auth required:
+- No
+
+Success response:
+- 200
+```json
+{
+  "message": "Mentor rejected and deleted successfully"
+}
+```
+
+Validation/business errors:
+- 400 { "error": "Invalid mentor id." }
+- 404 { "error": "Mentor not found." }
+
+Server error:
+- 500 { "error": "Failed to reject mentor" }
+
+---
+
+### 12.6 Get Mentor By Id
+Method and path:
+- GET /api/mentor/:id
+
+Auth required:
+- No
+
+Success response:
+- 200 (mentor profile object)
+
+Validation/business errors:
+- 400 { "error": "Invalid mentor id." }
+- 404 { "error": "Mentor not found." }
+
+Server error:
+- 500 { "error": "Failed to fetch mentor details" }
+
+---
+
+### 12.7 Get Mentor Resume File
+Method and path:
+- GET /api/mentor/:id/resume
+
+Auth required:
+- No
+
+Success response:
+- 200 (binary file; Content-Disposition inline)
+
+Validation/business errors:
+- 400 { "error": "Invalid mentor id." }
+- 404 { "error": "Mentor not found." }
+- 404 { "error": "Resume not found for this mentor." }
+
+Server error:
+- 500 { "error": "Failed to fetch mentor file" }
+
+---
+
+### 12.8 Get Mentor Profile Photo
+Method and path:
+- GET /api/mentor/:id/profile-photo
+
+Auth required:
+- No
+
+Success response:
+- 200 (binary image; Content-Disposition inline)
+
+Validation/business errors:
+- 400 { "error": "Invalid mentor id." }
+- 404 { "error": "Mentor not found." }
+- 404 { "error": "Profile photo not found for this mentor." }
+
+Server error:
+- 500 { "error": "Failed to fetch mentor file" }
+
+## 13. Internship API Details
+Base path: /api/internship/registration
+
+---
+
+### 13.1 Create Internship Payment Order
+Method and path:
+- POST /api/internship/registration/create-order
+
+Auth required:
+- No
+
+Request body:
+- email (required valid email)
+
+Current fee config:
+- Fixed internship application fee is 100 INR.
+
+Success response when payment required:
+- 201
+```json
+{
+  "requires_payment": true,
+  "key_id": "rzp_test_xxxxx",
+  "order_id": "order_xxxxx",
+  "amount": 10000,
+  "currency": "INR",
+  "application_fee": 100
+}
+```
+
+Success response when already applied:
+- 200
+```json
+{
+  "requires_payment": false,
+  "already_registered": true,
+  "amount": 0,
+  "currency": "INR",
+  "message": "You have already applied for this internship"
+}
+```
+
+Success response when fee is zero in config:
+- 200
+```json
+{
+  "requires_payment": false,
+  "amount": 0,
+  "currency": "INR"
+}
+```
+
+Validation/business errors:
+- 400 { "message": "email is required" }
+- 400 { "message": "Invalid email format" }
+
+Server errors:
+- 500 { "message": "Razorpay credentials are missing on the server" }
+- 500 { "message": "Invalid SUMMER_INTERNSHIP_FEE value in server config" }
+- 500 { "message": "Internal server error" }
+
+---
+
+### 13.2 Verify Internship Payment and Register
+Method and path:
+- POST /api/internship/registration/verify-payment
+
+Auth required:
+- No
+
+Supported content type:
+- multipart/form-data (recommended when uploading passport photo)
+
+Required payment fields:
+- razorpay_order_id
+- razorpay_payment_id
+- razorpay_signature
+
+Required registration fields:
+- full_name
+- guardian_name
+- gender
+- dob (YYYY-MM-DD)
+- mobile_number (or contact_number)
+- email
+- address
+- city
+- state
+- pin_code
+- institution_name
+- educational_qualification
+- declaration_accepted (must be true)
+- passport_photo (required file)
+
+Optional registration fields:
+- internship_name
+- internship_designation
+- alternative_email
+
+Passport photo upload rules:
+- Field name: passport_photo
+- Max size: 800KB
+- Allowed types: JPG, PNG, WEBP, HEIC, HEIF
+
+Success response:
+- 201
+```json
+{
+  "message": "Payment verified and internship application submitted successfully",
+  "payment": {
+    "razorpay_order_id": "order_xxxxx",
+    "razorpay_payment_id": "pay_xxxxx",
+    "status": "captured"
+  }
+}
+```
+
+Already-applied response:
+- 200
+```json
+{
+  "message": "Payment verified. You have already applied for this internship"
+}
+```
+
+Validation/business errors:
+- 400 { "message": "razorpay_order_id, razorpay_payment_id, and razorpay_signature are required" }
+- 400 { "message": "Invalid payment signature" }
+- 400 { "message": "Unable to validate payment with Razorpay" }
+- 400 { "message": "Payment does not belong to this order" }
+- 400 { "message": "Paid amount does not match internship application fee" }
+- 400 { "message": "Payment is not successful yet (status: ... )" }
+- 400 { "message": "Payment is not required for internship application" }
+- 400 { "message": "dob is required in YYYY-MM-DD format" }
+- 400 { "message": "declaration_accepted must be true" }
+- 400 { "message": "passport_photo is required" }
+- 400 { "message": "Invalid photo type. Use JPG, PNG, WEBP, HEIC, or HEIF." }
+- 400 { "message": "Unexpected file field. Use passport_photo." }
+- 413 { "message": "Passport photo is too large. Max size is 800KB." }
+
+Server errors:
+- 500 { "message": "Razorpay credentials are missing on the server" }
+- 500 { "message": "Internal server error" }
+
+---
+
+### 13.3 Register Internship Without Payment
+Method and path:
+- POST /api/internship/registration/register
+
+Auth required:
+- No
+
+Purpose:
+- Submits internship application without payment only when configured fee is 0.
+
+Request fields:
+- Same registration fields and photo rules as section 13.2.
+
+Current behavior with current config:
+- Since fixed fee is 100 INR, this endpoint currently returns:
+  - 400 { "message": "Payment is required before internship application submission" }
+
+Possible success response when fee is 0:
+- 201
+```json
+{
+  "message": "Internship application submitted successfully"
+}
+```
+
+Validation/business errors:
+- 400 validation errors from internship registration rules
+- 409 { "message": "You have already applied for this internship" }
+
+Server errors:
+- 500 { "message": "Invalid SUMMER_INTERNSHIP_FEE value in server config" }
+- 500 { "message": "Internal server error" }
+
+---
+
+### 13.4 Get Internship Applications
+Method and path:
+- GET /api/internship/registration/list
+
+Auth required:
+- No
+
+Success response:
+- 200
+```json
+{
+  "applications": [
+    {
+      "id": 1,
+      "internship_name": "Def-Space Summer Internship",
+      "internship_designation": "Def-Space Tech Intern",
+      "full_name": "Rahul Sharma",
+      "email": "rahul@example.com",
+      "mobile_number": "9876543210",
+      "declaration_accepted": true,
+      "has_passport_photo": true,
+      "payment_amount": 100,
+      "payment_currency": "INR",
+      "razorpay_order_id": "order_xxxxx",
+      "razorpay_payment_id": "pay_xxxxx",
+      "payment_status": "captured",
+      "created_at": "2026-04-04 10:30:00",
+      "updated_at": "2026-04-04 10:30:00"
+    }
+  ]
+}
+```
+
+Server error:
+- 500 { "message": "Internal server error" }
+
+## 14. Common Status Codes in This Project
 - 200 OK
 - 201 Created
 - 400 Bad Request
@@ -924,43 +1745,75 @@ Validation or database error response:
 - 403 Forbidden
 - 404 Not Found
 - 409 Conflict
+- 413 Payload Too Large
 - 500 Internal Server Error
 
-## 12. Complete Endpoint Index
+## 15. Complete Endpoint Index
 - GET /
 - GET /api-docs
 - GET /api-docs.json
+
 - POST /auth/register
 - POST /auth/login
 - POST /auth/change-password
 - GET /auth/profile
 - GET /auth/admin-only
 - GET /auth/instructor-only
+
 - GET /api/courses
 - GET /api/courses/:slug
 - POST /api/courses
 - POST /api/sections
 - POST /api/lectures
 - POST /api/enroll
+
 - POST /api/workshop/enrollment
+- POST /api/workshop/enrollment/create-order
+- POST /api/workshop/enrollment/verify-payment
+
+- GET /api/workshop-list
+- GET /api/workshop-list/list
+- GET /api/workshop-list/participants
 - POST /api/workshop-list/create
+- GET /api/workshop-list/:id
+- PUT /api/workshop-list/:id
+- DELETE /api/workshop-list/:id
+- GET /api/workshop-list/:id/participants
+- GET /api/workshop-list/:id/thumbnail
+- GET /api/workshop-list/:id/certificate
 
-## 13. Recommended End-to-End Test Flow
-1. Register a user.
-2. Login and copy token.
-3. Call profile with token.
-4. Create course (instructor/admin/super_admin token).
-5. Create section for course.
-6. Create lecture for section.
-7. Fetch /api/courses.
-8. Fetch /api/courses/:slug.
-9. Enroll with a learner token.
-10. Create workshop list entry with /api/workshop-list/create.
-11. Register workshop participant with /api/workshop/enrollment.
+- POST /api/mentor/register
+- GET /api/mentor/requests
+- GET /api/mentor/list
+- PATCH /api/mentor/:id/approve
+- DELETE /api/mentor/:id/reject
+- GET /api/mentor/:id
+- GET /api/mentor/:id/resume
+- GET /api/mentor/:id/profile-photo
 
-## 14. Notes
+- POST /api/internship/registration/create-order
+- POST /api/internship/registration/verify-payment
+- POST /api/internship/registration/register
+- GET /api/internship/registration/list
+
+## 16. Recommended End-to-End Test Flow
+1. Register and login a user.
+2. Call /auth/profile with bearer token.
+3. Create course, section, and lecture using instructor/admin role token.
+4. Fetch /api/courses and /api/courses/:slug.
+5. Enroll in course using /api/enroll.
+6. Create workshop with /api/workshop-list/create.
+7. Fetch workshop list and workshop by id.
+8. Create workshop order with /api/workshop/enrollment/create-order.
+9. Verify workshop payment and register via /api/workshop/enrollment/verify-payment.
+10. Fetch workshop participants via /api/workshop-list/:id/participants.
+11. Register mentor via /api/mentor/register.
+12. List mentor requests, approve one, and verify via /api/mentor/list.
+13. Create internship order, verify payment, then check /api/internship/registration/list.
+
+## 17. Notes
 - Passwords are hashed with bcrypt (salt rounds = 10).
-- Auth and LMS APIs are mounted in app as:
+- Auth and API routes are mounted as:
   - /auth
   - /api
 - Health endpoint text response is: API is running

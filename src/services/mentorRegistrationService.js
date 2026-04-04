@@ -2,6 +2,44 @@ const db = require('../config/db');
 
 const MENTOR_REGISTRATION_TABLE = 'mentor_registrations';
 const FILE_COLUMNS = new Set(['resume', 'profile_photo']);
+const MENTOR_STATUS_PENDING = 'pending';
+const MENTOR_STATUS_ACTIVE = 'active';
+const VALID_MENTOR_STATUSES = new Set([MENTOR_STATUS_PENDING, MENTOR_STATUS_ACTIVE]);
+
+const MENTOR_DETAIL_COLUMNS = `
+  id,
+  full_name,
+  email,
+  phone,
+  dob,
+  current_position,
+  organization,
+  years_experience,
+  professional_bio,
+  primary_track,
+  secondary_skills,
+  key_competencies,
+  video_call,
+  phone_call,
+  live_chat,
+  email_support,
+  availability,
+  max_students,
+  session_duration,
+  consultation_fee,
+  price_5_sessions,
+  price_10_sessions,
+  price_extended,
+  complimentary_session,
+  linkedin_url,
+  portfolio_url,
+  has_mentored_before,
+  mentoring_experience,
+  accepted_guidelines,
+  accepted_code_of_conduct,
+  (resume IS NOT NULL) AS has_resume,
+  (profile_photo IS NOT NULL) AS has_profile_photo,
+  created_at`;
 
 function toBoolean(value) {
   return value === true || value === 1;
@@ -41,6 +79,10 @@ function mapMentorDetails(row) {
     accepted_code_of_conduct: row.accepted_code_of_conduct === null
       ? null
       : toBoolean(row.accepted_code_of_conduct),
+    status:
+      typeof row.status === 'string' && row.status.trim()
+        ? row.status
+        : MENTOR_STATUS_PENDING,
     has_resume: toBoolean(row.has_resume),
     has_profile_photo: toBoolean(row.has_profile_photo),
     created_at: row.created_at,
@@ -60,7 +102,7 @@ async function isMentorEmailTaken(email) {
 }
 
 async function createMentorRegistration(payload) {
-  const columns = [
+  const baseColumns = [
     'full_name',
     'email',
     'phone',
@@ -94,65 +136,188 @@ async function createMentorRegistration(payload) {
     'accepted_code_of_conduct',
   ];
 
-  const values = columns.map((column) => payload[column]);
-  const placeholders = columns.map(() => '?').join(', ');
+  const baseValues = baseColumns.map((column) => payload[column]);
 
-  const [result] = await db.query(
-    `INSERT INTO ${MENTOR_REGISTRATION_TABLE} (${columns.join(', ')})
-     VALUES (${placeholders})`,
-    values
-  );
+  let result;
+
+  try {
+    const columnsWithStatus = [...baseColumns, 'status'];
+    const valuesWithStatus = [...baseValues, MENTOR_STATUS_PENDING];
+    const placeholders = columnsWithStatus.map(() => '?').join(', ');
+
+    [result] = await db.query(
+      `INSERT INTO ${MENTOR_REGISTRATION_TABLE} (${columnsWithStatus.join(', ')})
+       VALUES (${placeholders})`,
+      valuesWithStatus
+    );
+  } catch (err) {
+    // Keep registration backward compatible before status-column migration.
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
+      throw err;
+    }
+
+    const placeholders = baseColumns.map(() => '?').join(', ');
+
+    [result] = await db.query(
+      `INSERT INTO ${MENTOR_REGISTRATION_TABLE} (${baseColumns.join(', ')})
+       VALUES (${placeholders})`,
+      baseValues
+    );
+  }
 
   return Number(result.insertId);
 }
 
 async function getMentorById(id) {
-  const [rows] = await db.query(
-    `SELECT
-      id,
-      full_name,
-      email,
-      phone,
-      dob,
-      current_position,
-      organization,
-      years_experience,
-      professional_bio,
-      primary_track,
-      secondary_skills,
-      key_competencies,
-      video_call,
-      phone_call,
-      live_chat,
-      email_support,
-      availability,
-      max_students,
-      session_duration,
-      consultation_fee,
-      price_5_sessions,
-      price_10_sessions,
-      price_extended,
-      complimentary_session,
-      linkedin_url,
-      portfolio_url,
-      has_mentored_before,
-      mentoring_experience,
-      accepted_guidelines,
-      accepted_code_of_conduct,
-      (resume IS NOT NULL) AS has_resume,
-      (profile_photo IS NOT NULL) AS has_profile_photo,
-      created_at
-     FROM ${MENTOR_REGISTRATION_TABLE}
-     WHERE id = ?
-     LIMIT 1`,
-    [id]
-  );
+  let rows;
+
+  try {
+    [rows] = await db.query(
+      `SELECT
+        ${MENTOR_DETAIL_COLUMNS},
+        status
+       FROM ${MENTOR_REGISTRATION_TABLE}
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    );
+  } catch (err) {
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
+      throw err;
+    }
+
+    [rows] = await db.query(
+      `SELECT
+        ${MENTOR_DETAIL_COLUMNS}
+       FROM ${MENTOR_REGISTRATION_TABLE}
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    );
+
+    rows = rows.map((row) => ({
+      ...row,
+      status: MENTOR_STATUS_PENDING,
+    }));
+  }
 
   if (rows.length === 0) {
     return null;
   }
 
   return mapMentorDetails(rows[0]);
+}
+
+async function getMentorsByStatus(status) {
+  if (!VALID_MENTOR_STATUSES.has(status)) {
+    return [];
+  }
+
+  let rows;
+
+  try {
+    [rows] = await db.query(
+      `SELECT
+        ${MENTOR_DETAIL_COLUMNS},
+        status
+       FROM ${MENTOR_REGISTRATION_TABLE}
+       WHERE status = ?
+       ORDER BY created_at DESC, id DESC`,
+      [status]
+    );
+  } catch (err) {
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
+      throw err;
+    }
+
+    // Graceful fallback for pre-migration environments.
+    if (status === MENTOR_STATUS_ACTIVE) {
+      return [];
+    }
+
+    [rows] = await db.query(
+      `SELECT
+        ${MENTOR_DETAIL_COLUMNS}
+       FROM ${MENTOR_REGISTRATION_TABLE}
+       ORDER BY created_at DESC, id DESC`
+    );
+
+    rows = rows.map((row) => ({
+      ...row,
+      status: MENTOR_STATUS_PENDING,
+    }));
+  }
+
+  return rows.map(mapMentorDetails);
+}
+
+async function getPendingMentors() {
+  return getMentorsByStatus(MENTOR_STATUS_PENDING);
+}
+
+async function getActiveMentors() {
+  return getMentorsByStatus(MENTOR_STATUS_ACTIVE);
+}
+
+async function approveMentorById(id) {
+  try {
+    const [rows] = await db.query(
+      `SELECT id, status
+       FROM ${MENTOR_REGISTRATION_TABLE}
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return { outcome: 'not_found' };
+    }
+
+    const currentStatus = String(rows[0].status || '').trim().toLowerCase();
+
+    if (currentStatus === MENTOR_STATUS_ACTIVE) {
+      const mentor = await getMentorById(id);
+      return { outcome: 'already_active', mentor };
+    }
+
+    if (currentStatus && currentStatus !== MENTOR_STATUS_PENDING) {
+      return { outcome: 'invalid_status', status: currentStatus };
+    }
+
+    await db.query(
+      `UPDATE ${MENTOR_REGISTRATION_TABLE}
+       SET status = ?
+       WHERE id = ?`,
+      [MENTOR_STATUS_ACTIVE, id]
+    );
+
+    const mentor = await getMentorById(id);
+
+    return {
+      outcome: 'approved',
+      mentor,
+    };
+  } catch (err) {
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      return { outcome: 'status_column_missing' };
+    }
+
+    throw err;
+  }
+}
+
+async function rejectMentorById(id) {
+  const [result] = await db.query(
+    `DELETE FROM ${MENTOR_REGISTRATION_TABLE}
+     WHERE id = ?`,
+    [id]
+  );
+
+  if (!result || Number(result.affectedRows || 0) === 0) {
+    return { outcome: 'not_found' };
+  }
+
+  return { outcome: 'deleted' };
 }
 
 async function getMentorFileById(id, column) {
@@ -183,4 +348,8 @@ module.exports = {
   createMentorRegistration,
   getMentorById,
   getMentorFileById,
+  getPendingMentors,
+  getActiveMentors,
+  approveMentorById,
+  rejectMentorById,
 };

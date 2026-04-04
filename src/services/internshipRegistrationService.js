@@ -642,8 +642,69 @@ async function registerWithoutPayment(input) {
   );
 }
 
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function mapInternshipApplicationRow(row) {
+  return {
+    ...row,
+    declaration_accepted: toBoolean(row.declaration_accepted),
+    has_passport_photo: toBoolean(row.has_passport_photo),
+    payment_amount: toNumberOrNull(row.payment_amount),
+  };
+}
+
+async function getInternshipRegistrations() {
+  const [rows] = await db.query(
+    `SELECT
+      id,
+      internship_name,
+      internship_designation,
+      full_name,
+      guardian_name,
+      gender,
+      DATE_FORMAT(dob, '%Y-%m-%d') AS dob,
+      mobile_number,
+      email,
+      alternative_email,
+      address,
+      city,
+      state,
+      pin_code,
+      institution_name,
+      educational_qualification,
+      declaration_accepted,
+      CASE WHEN passport_photo IS NULL THEN 0 ELSE 1 END AS has_passport_photo,
+      passport_photo_mime_type,
+      passport_photo_file_name,
+      payment_amount,
+      payment_currency,
+      razorpay_order_id,
+      razorpay_payment_id,
+      payment_status,
+      DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+      DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
+     FROM ${INTERNSHIP_TABLE}
+     ORDER BY created_at DESC, id DESC`
+  );
+
+  return {
+    status: 200,
+    body: {
+      applications: rows.map(mapInternshipApplicationRow),
+    },
+  };
+}
+
 module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
   registerWithoutPayment,
+  getInternshipRegistrations,
 };

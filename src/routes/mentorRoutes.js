@@ -44,6 +44,11 @@ const router = express.Router();
  */
 router.post('/mentor/register', uploadMentorRegistrationFiles, mentorRegistrationController.registerMentor);
 
+router.get('/mentor/requests', mentorRegistrationController.getPendingMentors);
+router.get('/mentor/list', mentorRegistrationController.getActiveMentors);
+router.patch('/mentor/:id/approve', mentorRegistrationController.approveMentor);
+router.delete('/mentor/:id/reject', mentorRegistrationController.rejectMentor);
+
 router.get('/mentor/:id', mentorRegistrationController.getMentorById);
 router.get('/mentor/:id/resume', mentorRegistrationController.getMentorResume);
 router.get('/mentor/:id/profile-photo', mentorRegistrationController.getMentorProfilePhoto);

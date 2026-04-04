@@ -43,4 +43,16 @@ router.post(
   internshipRegistrationController.registerWithoutPayment
 );
 
+/**
+ * @openapi
+ * /api/internship/registration/list:
+ *   get:
+ *     tags: [Internships]
+ *     summary: Get internship applications for admin panel
+ */
+router.get(
+  '/internship/registration/list',
+  internshipRegistrationController.getInternshipRegistrations
+);
+
 module.exports = router;
