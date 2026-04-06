@@ -163,6 +163,7 @@ function mapWorkshopRow(row) {
     ? String(row.certificate_url)
     : (row.certificate_file ? buildWorkshopImageUrl(id, 'certificate') : null);
   const registeredCount = Number(row.registered_count);
+  const totalEnrollments = Number(row.total_enrollments);
 
   return {
     id,
@@ -176,6 +177,10 @@ function mapWorkshopRow(row) {
     duration: row.duration,
     certificate: Number(row.certificate || 0) === 1,
     fee: row.fee === null ? null : Number(row.fee),
+    created_at: formatDateTime(row.created_at),
+    total_enrollments: Number.isFinite(totalEnrollments)
+      ? totalEnrollments
+      : (Number.isFinite(registeredCount) ? registeredCount : 0),
     registered_count: Number.isFinite(registeredCount) ? registeredCount : 0,
     thumbnail_url: thumbnailUrl,
     certificate_url: certificateUrl,
@@ -197,10 +202,12 @@ function buildWorkshopListQuery(registeredCountExpression) {
       wl.duration,
       wl.certificate,
       wl.fee,
+      wl.created_at,
       wl.thumbnail_url,
       wl.thumbnail,
       wl.certificate_url,
       wl.certificate_file,
+      ${registeredCountExpression} AS total_enrollments,
       ${registeredCountExpression} AS registered_count
     FROM ${WORKSHOP_LIST_TABLE} wl
     ORDER BY wl.id DESC`;
@@ -219,10 +226,12 @@ function buildWorkshopByIdQuery(registeredCountExpression) {
       wl.duration,
       wl.certificate,
       wl.fee,
+      wl.created_at,
       wl.thumbnail_url,
       wl.thumbnail,
       wl.certificate_url,
       wl.certificate_file,
+      ${registeredCountExpression} AS total_enrollments,
       ${registeredCountExpression} AS registered_count
     FROM ${WORKSHOP_LIST_TABLE} wl
     WHERE wl.id = ?
@@ -230,22 +239,14 @@ function buildWorkshopByIdQuery(registeredCountExpression) {
 }
 
 function buildAllParticipantsQuery(includeCreatedAt = true) {
-  const createdAtExpression = includeCreatedAt ? 'wr.created_at' : 'NULL AS created_at';
   const createdAtUnixExpression = includeCreatedAt
     ? 'UNIX_TIMESTAMP(wr.created_at) AS created_at_unix'
     : 'NULL AS created_at_unix';
   const orderByExpression = includeCreatedAt ? 'wr.created_at DESC, wr.id DESC' : 'wr.id DESC';
 
   return `SELECT
-      wr.id,
-      wr.workshop_id,
-      wr.full_name,
-      wr.email,
-      wr.contact_number,
-      wr.institution,
-      wr.designation,
+      wr.*,
       wl.title AS workshop_title,
-      ${createdAtExpression},
       ${createdAtUnixExpression}
     FROM ${REGISTRATION_TABLE} wr
     LEFT JOIN ${WORKSHOP_LIST_TABLE} wl ON wl.id = wr.workshop_id
@@ -305,16 +306,28 @@ async function getAllParticipants() {
   const participants = rows.map((row) => {
     const workshopId = Number(row.workshop_id);
     const createdAtUnix = Number(row.created_at_unix);
+    const paymentAmount = Number(row.payment_amount);
 
     return {
+      ...row,
       id: Number(row.id),
       workshop_id: Number.isFinite(workshopId) ? workshopId : null,
       workshop_title: cleanText(row.workshop_title) || (Number.isFinite(workshopId) ? `Workshop ${workshopId}` : 'Workshop'),
       full_name: cleanText(row.full_name),
       email: cleanText(row.email),
       contact_number: cleanText(row.contact_number),
+      alternative_email: cleanText(row.alternative_email) || null,
       institution: cleanText(row.institution),
       designation: cleanText(row.designation),
+      nationality: cleanText(row.nationality) || null,
+      agree_recording: Number(row.agree_recording || 0) === 1,
+      agree_terms: Number(row.agree_terms || 0) === 1,
+      payment_amount: Number.isFinite(paymentAmount) ? paymentAmount : null,
+      payment_currency: cleanText(row.payment_currency) || null,
+      razorpay_order_id: cleanText(row.razorpay_order_id) || null,
+      razorpay_payment_id: cleanText(row.razorpay_payment_id) || null,
+      payment_status: cleanText(row.payment_status) || null,
+      payment_mode: cleanText(row.payment_mode) || null,
       created_at: formatDateTime(row.created_at),
       created_at_unix: Number.isFinite(createdAtUnix) && createdAtUnix > 0
         ? createdAtUnix
