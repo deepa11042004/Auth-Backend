@@ -15,7 +15,7 @@ const router = express.Router();
  *         application/json:
  *           schema:
  *             type: object
- *             required: [full_name, email, contact_number, institution, designation, agree_recording, agree_terms]
+ *             required: [full_name, email, contact_number, alternative_email, institution, designation, nationality, agree_recording, agree_terms]
  *             properties:
  *               full_name:
  *                 type: string
@@ -36,8 +36,12 @@ const router = express.Router();
  *                 example: XYZ University
  *               designation:
  *                 type: string
- *                 enum: [Student, Faculty, Professional]
+ *                 enum: [Student, Faculty, Professional, Others]
  *                 example: Student
+ *               nationality:
+ *                 type: string
+ *                 enum: [Indian, Others]
+ *                 example: Indian
  *               agree_recording:
  *                 type: boolean
  *                 example: true

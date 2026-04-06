@@ -16,7 +16,8 @@ const PAYMENT_FETCH_RETRY_ATTEMPTS = 6;
 const PAYMENT_FETCH_RETRY_DELAY_MS = 1200;
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ALLOWED_DESIGNATIONS = new Set(['Student', 'Faculty', 'Professional']);
+const ALLOWED_DESIGNATIONS = new Set(['Student', 'Faculty', 'Professional', 'Others']);
+const ALLOWED_NATIONALITIES = new Set(['Indian', 'Others']);
 
 function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -54,6 +55,20 @@ function normalizeDesignation(value) {
   }
   if (normalized === 'professional') {
     return 'Professional';
+  }
+  if (normalized === 'other' || normalized === 'others') {
+    return 'Others';
+  }
+  return '';
+}
+
+function normalizeNationality(value) {
+  const normalized = cleanText(value).toLowerCase();
+  if (normalized === 'indian') {
+    return 'Indian';
+  }
+  if (normalized === 'other' || normalized === 'others') {
+    return 'Others';
   }
   return '';
 }
@@ -219,6 +234,19 @@ async function incrementWorkshopEnrollmentCounter(connection, workshopId) {
 }
 
 async function insertWorkshopRegistrationRecord(connection, payload) {
+  const baseColumns = [
+    'workshop_id',
+    'full_name',
+    'email',
+    'contact_number',
+    'alternative_email',
+    'institution',
+    'designation',
+    'nationality',
+    'agree_recording',
+    'agree_terms',
+  ];
+
   const baseValues = [
     payload.workshopId,
     payload.fullName,
@@ -227,8 +255,18 @@ async function insertWorkshopRegistrationRecord(connection, payload) {
     payload.alternativeEmail,
     payload.institution,
     payload.designation,
+    payload.nationality,
     payload.agreeRecording,
     payload.agreeTerms,
+  ];
+
+  const paymentColumns = [
+    'payment_amount',
+    'payment_currency',
+    'razorpay_order_id',
+    'razorpay_payment_id',
+    'payment_status',
+    'payment_mode',
   ];
 
   const valuesWithPayment = [
@@ -242,48 +280,65 @@ async function insertWorkshopRegistrationRecord(connection, payload) {
   ];
 
   try {
+    const columnsWithPayment = [...baseColumns, ...paymentColumns];
+    const placeholdersWithPayment = columnsWithPayment.map(() => '?').join(', ');
+
     await connection.query(
-      `INSERT INTO ${REGISTRATION_TABLE} (
-        workshop_id,
-        full_name,
-        email,
-        contact_number,
-        alternative_email,
-        institution,
-        designation,
-        agree_recording,
-        agree_terms,
-        payment_amount,
-        payment_currency,
-        razorpay_order_id,
-        razorpay_payment_id,
-        payment_status,
-        payment_mode
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ${REGISTRATION_TABLE} (${columnsWithPayment.join(', ')})
+       VALUES (${placeholdersWithPayment})`,
       valuesWithPayment
     );
   } catch (err) {
-    // Keep registration functional before the payment-column migration is applied.
-    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+    // Keep registration functional before schema migrations are applied.
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
+      throw err;
+    }
+
+    try {
+      const basePlaceholders = baseColumns.map(() => '?').join(', ');
       await connection.query(
-        `INSERT INTO ${REGISTRATION_TABLE} (
-          workshop_id,
-          full_name,
-          email,
-          contact_number,
-          alternative_email,
-          institution,
-          designation,
-          agree_recording,
-          agree_terms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ${REGISTRATION_TABLE} (${baseColumns.join(', ')})
+         VALUES (${basePlaceholders})`,
         baseValues
       );
 
       return;
-    }
+    } catch (fallbackErr) {
+      if (!fallbackErr || fallbackErr.code !== 'ER_BAD_FIELD_ERROR') {
+        throw fallbackErr;
+      }
 
-    throw err;
+      const legacyColumns = [
+        'workshop_id',
+        'full_name',
+        'email',
+        'contact_number',
+        'alternative_email',
+        'institution',
+        'designation',
+        'agree_recording',
+        'agree_terms',
+      ];
+
+      const legacyValues = [
+        payload.workshopId,
+        payload.fullName,
+        payload.email,
+        payload.contactNumber,
+        payload.alternativeEmail,
+        payload.institution,
+        payload.designation,
+        payload.agreeRecording,
+        payload.agreeTerms,
+      ];
+
+      const legacyPlaceholders = legacyColumns.map(() => '?').join(', ');
+      await connection.query(
+        `INSERT INTO ${REGISTRATION_TABLE} (${legacyColumns.join(', ')})
+         VALUES (${legacyPlaceholders})`,
+        legacyValues
+      );
+    }
   }
 }
 
@@ -544,10 +599,12 @@ async function verifyPaymentAndRegister(input) {
 async function registerForWorkshop(input) {
   const fullName = cleanText(input.full_name);
   const email = normalizeEmail(input.email);
-  const contactNumber = cleanText(input.contact_number);
-  const alternativeEmail = normalizeEmail(input.alternative_email) || null;
+  const contactNumberRaw = cleanText(input.contact_number);
+  const contactNumber = contactNumberRaw.replace(/\D/g, '');
+  const alternativeEmail = normalizeEmail(input.alternative_email);
   const institution = cleanText(input.institution);
   const designation = normalizeDesignation(input.designation);
+  const nationality = normalizeNationality(input.nationality);
   const agreeRecording = toBoolean(input.agree_recording);
   const agreeTerms = toBoolean(input.agree_terms);
   const workshopId = resolveWorkshopId(input || {});
@@ -565,13 +622,28 @@ async function registerForWorkshop(input) {
     };
   }
 
-  if (!fullName || !email || !contactNumber || !institution || !designation) {
+  if (
+    !fullName
+    || !email
+    || !contactNumber
+    || !alternativeEmail
+    || !institution
+    || !designation
+    || !nationality
+  ) {
     return {
       status: 400,
       body: {
         message:
-          'full_name, email, contact_number, institution and designation are required',
+          'full_name, email, contact_number, alternative_email, institution, designation and nationality are required',
       },
+    };
+  }
+
+  if (!/^[0-9]{10}$/.test(contactNumber)) {
+    return {
+      status: 400,
+      body: { message: 'contact_number must be exactly 10 digits' },
     };
   }
 
@@ -582,7 +654,7 @@ async function registerForWorkshop(input) {
     };
   }
 
-  if (alternativeEmail && !EMAIL_REGEX.test(alternativeEmail)) {
+  if (!EMAIL_REGEX.test(alternativeEmail)) {
     return {
       status: 400,
       body: { message: 'Invalid alternative_email format' },
@@ -592,7 +664,14 @@ async function registerForWorkshop(input) {
   if (!ALLOWED_DESIGNATIONS.has(designation)) {
     return {
       status: 400,
-      body: { message: 'designation must be Student, Faculty, or Professional' },
+      body: { message: 'designation must be Student, Faculty, Professional, or Others' },
+    };
+  }
+
+  if (!ALLOWED_NATIONALITIES.has(nationality)) {
+    return {
+      status: 400,
+      body: { message: 'nationality must be Indian or Others' },
     };
   }
 
@@ -646,6 +725,7 @@ async function registerForWorkshop(input) {
         alternativeEmail,
         institution,
         designation,
+        nationality,
         agreeRecording,
         agreeTerms,
         paymentAmount: resolvedPaymentAmount,
