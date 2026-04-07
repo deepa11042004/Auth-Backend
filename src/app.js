@@ -8,6 +8,7 @@ const workshopRoutes = require('./routes/workshopRoutes');
 const workshopListRoutes = require('./routes/workshopListRoutes');
 const mentorRoutes = require('./routes/mentorRoutes');
 const internshipRoutes = require('./routes/internshipRoutes');
+const summerSchoolRoutes = require('./routes/summerSchoolRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
 
@@ -33,6 +34,7 @@ app.use('/api', workshopRoutes);
 app.use('/api', workshopListRoutes);
 app.use('/api', mentorRoutes);
 app.use('/api', internshipRoutes);
+app.use('/api', summerSchoolRoutes);
 
 app.use(errorHandler);
 

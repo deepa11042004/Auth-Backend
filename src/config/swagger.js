@@ -47,6 +47,10 @@ const options = {
         name: 'Internships',
         description: 'Summer internship application and payment endpoints',
       },
+      {
+        name: 'Summer School',
+        description: 'Summer school student registration endpoints',
+      },
     ],
   },
   apis: ['./src/routes/*.js'],

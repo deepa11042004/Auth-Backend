@@ -1,0 +1,328 @@
+const db = require('../config/db');
+
+const STUDENT_REGISTRATION_TABLE = 'summer_school_student_registrations';
+const NATIONALITY_OPTIONS = Object.freeze(['Indian', 'Other']);
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+const studentRegistrationSchema = Object.freeze({
+  full_name: { type: String, required: true },
+  dob: { type: String, required: true },
+  email: { type: String, required: true },
+  grade: { type: String, required: true },
+  school: { type: String, required: true },
+  board: { type: String, required: true },
+  nationality: {
+    type: String,
+    enum: NATIONALITY_OPTIONS,
+    required: true,
+  },
+  gender: { type: String, required: false },
+  guardian_name: { type: String, required: true },
+  relationship: { type: String, required: true },
+  guardian_email: { type: String, required: true },
+  guardian_phone: { type: String, required: true },
+  alt_phone: { type: String, required: false },
+  batch: { type: String, required: true },
+  experience: { type: String, required: false },
+  guidelines_accepted: { type: Boolean, required: true },
+  conduct_accepted: { type: Boolean, required: true },
+});
+
+function cleanText(value) {
+  if (Array.isArray(value)) {
+    return typeof value[0] === 'string' ? value[0].trim() : '';
+  }
+
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function toNullableText(value) {
+  const cleaned = cleanText(value);
+  return cleaned || null;
+}
+
+function normalizeEmail(value) {
+  return cleanText(value).toLowerCase();
+}
+
+function toBoolean(value) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    return value === 1;
+  }
+
+  const normalized = cleanText(value).toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+}
+
+function isValidDateString(value) {
+  if (!DATE_REGEX.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split('-').map((part) => Number(part));
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    date.getUTCFullYear() === year
+    && date.getUTCMonth() + 1 === month
+    && date.getUTCDate() === day
+  );
+}
+
+function formatDate(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString().split('T')[0];
+  }
+
+  const asString = String(value).trim();
+  return asString || null;
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  const asString = String(value).trim();
+  return asString || null;
+}
+
+function normalizeStudentRegistrationPayload(input = {}) {
+  const payload = {
+    full_name: cleanText(input.full_name || input.fullName),
+    dob: cleanText(input.dob),
+    email: normalizeEmail(input.email),
+    grade: cleanText(input.grade),
+    school: cleanText(input.school),
+    board: cleanText(input.board),
+    nationality: cleanText(input.nationality),
+    gender: toNullableText(input.gender),
+    guardian_name: cleanText(input.guardian_name || input.guardianName),
+    relationship: cleanText(input.relationship),
+    guardian_email: normalizeEmail(input.guardian_email || input.guardianEmail),
+    guardian_phone: cleanText(input.guardian_phone || input.guardianPhone),
+    alt_phone: toNullableText(input.alt_phone || input.altPhone),
+    batch: cleanText(input.batch),
+    experience: toNullableText(input.experience),
+    guidelines_accepted: toBoolean(input.guidelines_accepted ?? input.guidelinesAccepted),
+    conduct_accepted: toBoolean(input.conduct_accepted ?? input.conductAccepted),
+  };
+
+  const errors = [];
+
+  if (!payload.full_name) {
+    errors.push('full_name is required');
+  }
+
+  if (!payload.dob || !isValidDateString(payload.dob)) {
+    errors.push('dob is required in YYYY-MM-DD format');
+  }
+
+  if (!payload.email) {
+    errors.push('email is required');
+  } else if (!EMAIL_REGEX.test(payload.email)) {
+    errors.push('Invalid email format');
+  }
+
+  if (!payload.grade) {
+    errors.push('grade is required');
+  }
+
+  if (!payload.school) {
+    errors.push('school is required');
+  }
+
+  if (!payload.board) {
+    errors.push('board is required');
+  }
+
+  if (!payload.nationality) {
+    errors.push('nationality is required');
+  } else if (!NATIONALITY_OPTIONS.includes(payload.nationality)) {
+    errors.push(`nationality must be one of: ${NATIONALITY_OPTIONS.join(', ')}`);
+  }
+
+  if (!payload.guardian_name) {
+    errors.push('guardian_name is required');
+  }
+
+  if (!payload.relationship) {
+    errors.push('relationship is required');
+  }
+
+  if (!payload.guardian_email) {
+    errors.push('guardian_email is required');
+  } else if (!EMAIL_REGEX.test(payload.guardian_email)) {
+    errors.push('Invalid guardian_email format');
+  }
+
+  if (!payload.guardian_phone) {
+    errors.push('guardian_phone is required');
+  }
+
+  if (!payload.batch) {
+    errors.push('batch is required');
+  }
+
+  if (!payload.guidelines_accepted) {
+    errors.push('guidelines_accepted must be true');
+  }
+
+  if (!payload.conduct_accepted) {
+    errors.push('conduct_accepted must be true');
+  }
+
+  return { payload, errors };
+}
+
+async function ensureStudentRegistrationTable(connection = db) {
+  await connection.query(
+    `CREATE TABLE IF NOT EXISTS ${STUDENT_REGISTRATION_TABLE} (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      full_name VARCHAR(255) NOT NULL,
+      dob DATE NOT NULL,
+      email VARCHAR(255) NOT NULL,
+      grade VARCHAR(80) NOT NULL,
+      school VARCHAR(255) NOT NULL,
+      board VARCHAR(120) NOT NULL,
+      nationality ENUM('Indian', 'Other') NOT NULL,
+      gender VARCHAR(40) NULL,
+      guardian_name VARCHAR(255) NOT NULL,
+      relationship VARCHAR(80) NOT NULL,
+      guardian_email VARCHAR(255) NOT NULL,
+      guardian_phone VARCHAR(30) NOT NULL,
+      alt_phone VARCHAR(30) NULL,
+      batch VARCHAR(255) NOT NULL,
+      experience TEXT NULL,
+      guidelines_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+      conduct_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_summer_school_students_created_at (created_at),
+      INDEX idx_summer_school_students_email (email)
+    )`
+  );
+
+  const [nationalityColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${STUDENT_REGISTRATION_TABLE} LIKE 'nationality'`
+  );
+
+  if (nationalityColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${STUDENT_REGISTRATION_TABLE}
+       ADD COLUMN nationality ENUM('Indian', 'Other') NOT NULL DEFAULT 'Indian' AFTER board`
+    );
+  }
+}
+
+function mapStudentRegistrationRow(row) {
+  return {
+    id: Number(row.id),
+    full_name: cleanText(row.full_name),
+    dob: formatDate(row.dob),
+    email: cleanText(row.email),
+    grade: cleanText(row.grade),
+    school: cleanText(row.school),
+    board: cleanText(row.board),
+    nationality: cleanText(row.nationality),
+    gender: cleanText(row.gender) || null,
+    guardian_name: cleanText(row.guardian_name),
+    relationship: cleanText(row.relationship),
+    guardian_email: cleanText(row.guardian_email),
+    guardian_phone: cleanText(row.guardian_phone),
+    alt_phone: cleanText(row.alt_phone) || null,
+    batch: cleanText(row.batch),
+    experience: cleanText(row.experience) || null,
+    guidelines_accepted: Number(row.guidelines_accepted || 0) === 1,
+    conduct_accepted: Number(row.conduct_accepted || 0) === 1,
+    created_at: formatDateTime(row.created_at),
+    updated_at: formatDateTime(row.updated_at),
+  };
+}
+
+async function createStudentRegistration(payload, connection = db) {
+  const [result] = await connection.query(
+    `INSERT INTO ${STUDENT_REGISTRATION_TABLE} (
+      full_name,
+      dob,
+      email,
+      grade,
+      school,
+      board,
+      nationality,
+      gender,
+      guardian_name,
+      relationship,
+      guardian_email,
+      guardian_phone,
+      alt_phone,
+      batch,
+      experience,
+      guidelines_accepted,
+      conduct_accepted
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      payload.full_name,
+      payload.dob,
+      payload.email,
+      payload.grade,
+      payload.school,
+      payload.board,
+      payload.nationality,
+      payload.gender,
+      payload.guardian_name,
+      payload.relationship,
+      payload.guardian_email,
+      payload.guardian_phone,
+      payload.alt_phone,
+      payload.batch,
+      payload.experience,
+      payload.guidelines_accepted,
+      payload.conduct_accepted,
+    ]
+  );
+
+  const createdId = Number(result.insertId);
+  const [rows] = await connection.query(
+    `SELECT *
+     FROM ${STUDENT_REGISTRATION_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [createdId]
+  );
+
+  return rows[0] ? mapStudentRegistrationRow(rows[0]) : null;
+}
+
+async function getStudentRegistrations(connection = db) {
+  const [rows] = await connection.query(
+    `SELECT *
+     FROM ${STUDENT_REGISTRATION_TABLE}
+     ORDER BY created_at DESC, id DESC`
+  );
+
+  return rows.map(mapStudentRegistrationRow);
+}
+
+module.exports = {
+  STUDENT_REGISTRATION_TABLE,
+  NATIONALITY_OPTIONS,
+  studentRegistrationSchema,
+  normalizeStudentRegistrationPayload,
+  ensureStudentRegistrationTable,
+  createStudentRegistration,
+  getStudentRegistrations,
+};
