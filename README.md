@@ -1297,6 +1297,7 @@ Required fields:
 - dob (YYYY-MM-DD)
 
 Optional fields:
+- nationality (Indian or Others)
 - current_position
 - organization
 - years_experience (integer)
@@ -1311,6 +1312,11 @@ Optional fields:
 - availability
 - max_students (integer)
 - session_duration
+- currency (string, e.g. INR or USD)
+- honorarium_hourly (number)
+- honorarium_daily (number)
+- honorarium_weekly (number)
+- honorarium_project (number)
 - consultation_fee (number)
 - price_5_sessions (number)
 - price_10_sessions (number)
@@ -1322,6 +1328,21 @@ Optional fields:
 - mentoring_experience
 - accepted_guidelines (boolean)
 - accepted_code_of_conduct (boolean)
+
+Field aliases accepted for compatibility:
+- honorariumHourly maps to honorarium_hourly
+- honorariumDaily maps to honorarium_daily
+- honorariumWeekly maps to honorarium_weekly
+- honorariumProject maps to honorarium_project
+
+Currency behavior:
+- INR and USD are accepted
+- US$, $, and US DOLLAR are normalized to USD
+- Rs, ₹, and INDIAN RUPEE are normalized to INR
+
+Nationality behavior:
+- Indian and Others are accepted values
+- other is normalized to Others
 
 Optional files (multipart/form-data):
 - resume (PDF/DOC/DOCX, max 5MB)

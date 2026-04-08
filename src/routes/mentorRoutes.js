@@ -43,6 +43,7 @@ const router = express.Router();
  *         description: Duplicate email
  */
 router.post('/mentor/register', uploadMentorRegistrationFiles, mentorRegistrationController.registerMentor);
+router.post('/mentor/create-order', mentorRegistrationController.createPaymentOrder);
 
 router.get('/mentor/requests', mentorRegistrationController.getPendingMentors);
 router.get('/mentor/list', mentorRegistrationController.getActiveMentors);

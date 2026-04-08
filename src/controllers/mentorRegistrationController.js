@@ -2,6 +2,7 @@ const mentorRegistrationService = require('../services/mentorRegistrationService
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const ALLOWED_MENTOR_CURRENCIES = new Set(['INR', 'USD']);
 
 function firstValue(value) {
   return Array.isArray(value) ? value[0] : value;
@@ -15,6 +16,57 @@ function cleanText(value) {
 function toNullableText(value) {
   const cleaned = cleanText(value);
   return cleaned || null;
+}
+
+function normalizeMentorCurrency(value) {
+  const cleaned = cleanText(value).toUpperCase();
+  if (!cleaned) {
+    return null;
+  }
+
+  if (cleaned === '$' || cleaned === 'US$' || cleaned === 'US DOLLAR') {
+    return 'USD';
+  }
+
+  if (cleaned === '₹' || cleaned === 'RS' || cleaned === 'INDIAN RUPEE') {
+    return 'INR';
+  }
+
+  return cleaned;
+}
+
+function normalizeMentorNationality(value) {
+  const cleaned = cleanText(value).toLowerCase();
+  if (!cleaned) {
+    return null;
+  }
+
+  if (cleaned === 'indian') {
+    return 'Indian';
+  }
+
+  if (cleaned === 'other' || cleaned === 'others') {
+    return 'Others';
+  }
+
+  return null;
+}
+
+function firstDefined(...values) {
+  for (const value of values) {
+    const candidate = firstValue(value);
+    if (candidate === undefined || candidate === null) {
+      continue;
+    }
+
+    if (typeof candidate === 'string' && candidate.trim() === '') {
+      continue;
+    }
+
+    return candidate;
+  }
+
+  return undefined;
 }
 
 function toBoolean(value, defaultValue = false) {
@@ -163,6 +215,55 @@ function buildMentorPayload(req) {
   const email = cleanText(req.body.email).toLowerCase();
   const phone = cleanText(req.body.phone);
   const dob = cleanText(req.body.dob);
+  const consultationFeeRaw = firstDefined(
+    req.body.consultation_fee,
+    req.body.honorarium_hourly,
+    req.body.honorariumHourly
+  );
+  const price5Raw = firstDefined(
+    req.body.price_5_sessions,
+    req.body.honorarium_daily,
+    req.body.honorariumDaily
+  );
+  const price10Raw = firstDefined(
+    req.body.price_10_sessions,
+    req.body.honorarium_weekly,
+    req.body.honorariumWeekly
+  );
+  const priceExtendedRaw = firstDefined(
+    req.body.price_extended,
+    req.body.honorarium_project,
+    req.body.honorariumProject
+  );
+
+  const consultationFee = parseNullableDecimal(
+    consultationFeeRaw,
+    'consultation_fee',
+    errors
+  );
+  const price5Sessions = parseNullableDecimal(price5Raw, 'price_5_sessions', errors);
+  const price10Sessions = parseNullableDecimal(price10Raw, 'price_10_sessions', errors);
+  const priceExtended = parseNullableDecimal(priceExtendedRaw, 'price_extended', errors);
+
+  const honorariumHourlyRaw = firstDefined(
+    req.body.honorarium_hourly,
+    req.body.honorariumHourly
+  );
+  const honorariumDailyRaw = firstDefined(
+    req.body.honorarium_daily,
+    req.body.honorariumDaily
+  );
+  const honorariumWeeklyRaw = firstDefined(
+    req.body.honorarium_weekly,
+    req.body.honorariumWeekly
+  );
+  const honorariumProjectRaw = firstDefined(
+    req.body.honorarium_project,
+    req.body.honorariumProject
+  );
+
+  const normalizedCurrency = normalizeMentorCurrency(req.body.currency);
+  const nationality = normalizeMentorNationality(req.body.nationality);
 
   if (!fullName) {
     errors.push('full_name is required.');
@@ -184,11 +285,23 @@ function buildMentorPayload(req) {
     errors.push('dob must be a valid date in YYYY-MM-DD format.');
   }
 
+  if (
+    normalizedCurrency
+    && !ALLOWED_MENTOR_CURRENCIES.has(normalizedCurrency)
+  ) {
+    errors.push('currency must be INR or USD.');
+  }
+
+  if (!nationality) {
+    errors.push('nationality is required and must be Indian or Others.');
+  }
+
   const payload = {
     full_name: fullName,
     email,
     phone,
     dob,
+    nationality,
     current_position: toNullableText(req.body.current_position),
     organization: toNullableText(req.body.organization),
     years_experience: parseNullableInt(req.body.years_experience, 'years_experience', errors),
@@ -203,10 +316,23 @@ function buildMentorPayload(req) {
     availability: toNullableText(req.body.availability),
     max_students: parseNullableInt(req.body.max_students, 'max_students', errors),
     session_duration: toNullableText(req.body.session_duration),
-    consultation_fee: parseNullableDecimal(req.body.consultation_fee, 'consultation_fee', errors),
-    price_5_sessions: parseNullableDecimal(req.body.price_5_sessions, 'price_5_sessions', errors),
-    price_10_sessions: parseNullableDecimal(req.body.price_10_sessions, 'price_10_sessions', errors),
-    price_extended: parseNullableDecimal(req.body.price_extended, 'price_extended', errors),
+    consultation_fee: consultationFee,
+    price_5_sessions: price5Sessions,
+    price_10_sessions: price10Sessions,
+    price_extended: priceExtended,
+    currency: normalizedCurrency,
+    honorarium_hourly: honorariumHourlyRaw === undefined
+      ? consultationFee
+      : parseNullableDecimal(honorariumHourlyRaw, 'honorarium_hourly', errors),
+    honorarium_daily: honorariumDailyRaw === undefined
+      ? price5Sessions
+      : parseNullableDecimal(honorariumDailyRaw, 'honorarium_daily', errors),
+    honorarium_weekly: honorariumWeeklyRaw === undefined
+      ? price10Sessions
+      : parseNullableDecimal(honorariumWeeklyRaw, 'honorarium_weekly', errors),
+    honorarium_project: honorariumProjectRaw === undefined
+      ? priceExtended
+      : parseNullableDecimal(honorariumProjectRaw, 'honorarium_project', errors),
     complimentary_session: toBoolean(req.body.complimentary_session, false),
     resume: req.files?.resume?.[0]?.buffer || null,
     profile_photo: req.files?.profile_photo?.[0]?.buffer || null,
@@ -227,6 +353,16 @@ function buildMentorPayload(req) {
   return { payload, errors };
 }
 
+async function createPaymentOrder(req, res) {
+  try {
+    const result = await mentorRegistrationService.createPaymentOrder(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('Mentor payment order error:', err);
+    return res.status(500).json({ error: 'Failed to create mentor payment order' });
+  }
+}
+
 async function registerMentor(req, res) {
   try {
     const { payload, errors } = buildMentorPayload(req);
@@ -234,13 +370,36 @@ async function registerMentor(req, res) {
       return res.status(400).json({ error: errors.join(' ') });
     }
 
-    const emailTaken = await mentorRegistrationService.isMentorEmailTaken(payload.email);
-    if (emailTaken) {
-      return res.status(409).json({ error: 'Email already registered.' });
+    const paymentVerification = await mentorRegistrationService.verifyPaymentForRegistration({
+      nationality: payload.nationality,
+      razorpay_order_id: req.body.razorpay_order_id,
+      razorpay_payment_id: req.body.razorpay_payment_id,
+      razorpay_signature: req.body.razorpay_signature,
+    });
+
+    if (paymentVerification.status !== 200) {
+      return res.status(paymentVerification.status).json({
+        error: paymentVerification.body?.message || 'Payment verification failed',
+      });
     }
 
-    await mentorRegistrationService.createMentorRegistration(payload);
-    return res.status(201).json({ message: 'Mentor registered successfully' });
+    const emailTaken = await mentorRegistrationService.isMentorEmailTaken(payload.email);
+    if (emailTaken) {
+      return res.status(200).json({
+        message: 'Payment verified. Email already registered.',
+        payment: paymentVerification.paymentDetails,
+      });
+    }
+
+    await mentorRegistrationService.createMentorRegistration({
+      ...payload,
+      ...(paymentVerification.paymentDetails || {}),
+    });
+
+    return res.status(201).json({
+      message: 'Payment verified and mentor registered successfully',
+      payment: paymentVerification.paymentDetails,
+    });
   } catch (err) {
     if (err && err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({ error: 'Email already registered.' });
@@ -403,6 +562,7 @@ async function rejectMentor(req, res) {
 }
 
 module.exports = {
+  createPaymentOrder,
   registerMentor,
   getMentorById,
   getMentorResume,
