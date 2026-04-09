@@ -15,6 +15,16 @@ const router = express.Router();
  *     summary: Get all summer school student registrations
  */
 router.post(
+  '/summer-school/student-registration/create-order',
+  summerSchoolController.createPaymentOrder
+);
+
+router.post(
+  '/summer-school/student-registration/verify-payment',
+  summerSchoolController.verifyPaymentAndRegister
+);
+
+router.post(
   '/summer-school/student-registration',
   summerSchoolController.createStudentRegistration
 );

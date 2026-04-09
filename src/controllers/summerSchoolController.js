@@ -1,5 +1,23 @@
 const summerSchoolService = require('../services/summerSchoolService');
 
+async function createPaymentOrder(req, res, next) {
+  try {
+    const result = await summerSchoolService.createPaymentOrder(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function verifyPaymentAndRegister(req, res, next) {
+  try {
+    const result = await summerSchoolService.verifyPaymentAndRegister(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function createStudentRegistration(req, res, next) {
   try {
     const result = await summerSchoolService.registerStudent(req.body || {});
@@ -19,6 +37,8 @@ async function getStudentRegistrations(req, res, next) {
 }
 
 module.exports = {
+  createPaymentOrder,
+  verifyPaymentAndRegister,
   createStudentRegistration,
   getStudentRegistrations,
 };

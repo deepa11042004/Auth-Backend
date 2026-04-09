@@ -5,6 +5,33 @@ const NATIONALITY_OPTIONS = Object.freeze(['Indian', 'Other']);
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
+const PAYMENT_COLUMNS = Object.freeze([
+  {
+    name: 'payment_amount',
+    definition: 'DECIMAL(10,2) NULL AFTER conduct_accepted',
+  },
+  {
+    name: 'payment_currency',
+    definition: 'VARCHAR(10) NULL AFTER payment_amount',
+  },
+  {
+    name: 'razorpay_order_id',
+    definition: 'VARCHAR(120) NULL AFTER payment_currency',
+  },
+  {
+    name: 'razorpay_payment_id',
+    definition: 'VARCHAR(120) NULL AFTER razorpay_order_id',
+  },
+  {
+    name: 'payment_status',
+    definition: 'VARCHAR(40) NULL AFTER razorpay_payment_id',
+  },
+  {
+    name: 'payment_mode',
+    definition: 'VARCHAR(40) NULL AFTER payment_status',
+  },
+]);
+
 const studentRegistrationSchema = Object.freeze({
   full_name: { type: String, required: true },
   dob: { type: String, required: true },
@@ -44,6 +71,11 @@ function toNullableText(value) {
 
 function normalizeEmail(value) {
   return cleanText(value).toLowerCase();
+}
+
+function toNullableUpperText(value) {
+  const cleaned = toNullableText(value);
+  return cleaned ? cleaned.toUpperCase() : null;
 }
 
 function toBoolean(value) {
@@ -209,10 +241,18 @@ async function ensureStudentRegistrationTable(connection = db) {
       experience TEXT NULL,
       guidelines_accepted BOOLEAN NOT NULL DEFAULT FALSE,
       conduct_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+      payment_amount DECIMAL(10,2) NULL,
+      payment_currency VARCHAR(10) NULL,
+      razorpay_order_id VARCHAR(120) NULL,
+      razorpay_payment_id VARCHAR(120) NULL,
+      payment_status VARCHAR(40) NULL,
+      payment_mode VARCHAR(40) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_summer_school_students_created_at (created_at),
-      INDEX idx_summer_school_students_email (email)
+      INDEX idx_summer_school_students_email (email),
+      INDEX idx_summer_school_students_razorpay_order_id (razorpay_order_id),
+      INDEX idx_summer_school_students_razorpay_payment_id (razorpay_payment_id)
     )`
   );
 
@@ -226,9 +266,28 @@ async function ensureStudentRegistrationTable(connection = db) {
        ADD COLUMN nationality ENUM('Indian', 'Other') NOT NULL DEFAULT 'Indian' AFTER board`
     );
   }
+
+  for (const paymentColumn of PAYMENT_COLUMNS) {
+    const [column] = await connection.query(
+      `SHOW COLUMNS FROM ${STUDENT_REGISTRATION_TABLE} LIKE ?`,
+      [paymentColumn.name]
+    );
+
+    if (column.length === 0) {
+      await connection.query(
+        `ALTER TABLE ${STUDENT_REGISTRATION_TABLE}
+         ADD COLUMN ${paymentColumn.name} ${paymentColumn.definition}`
+      );
+    }
+  }
 }
 
 function mapStudentRegistrationRow(row) {
+  const numericPaymentAmount =
+    row.payment_amount === null || row.payment_amount === undefined
+      ? null
+      : Number(row.payment_amount);
+
   return {
     id: Number(row.id),
     full_name: cleanText(row.full_name),
@@ -248,52 +307,117 @@ function mapStudentRegistrationRow(row) {
     experience: cleanText(row.experience) || null,
     guidelines_accepted: Number(row.guidelines_accepted || 0) === 1,
     conduct_accepted: Number(row.conduct_accepted || 0) === 1,
+    payment_amount: Number.isFinite(numericPaymentAmount) ? numericPaymentAmount : null,
+    payment_currency: cleanText(row.payment_currency) || null,
+    razorpay_order_id: cleanText(row.razorpay_order_id) || null,
+    razorpay_payment_id: cleanText(row.razorpay_payment_id) || null,
+    payment_status: cleanText(row.payment_status) || null,
+    payment_mode: cleanText(row.payment_mode) || null,
     created_at: formatDateTime(row.created_at),
     updated_at: formatDateTime(row.updated_at),
   };
 }
 
+function normalizePaymentAmount(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+
+  return Math.round(numeric * 100) / 100;
+}
+
 async function createStudentRegistration(payload, connection = db) {
-  const [result] = await connection.query(
-    `INSERT INTO ${STUDENT_REGISTRATION_TABLE} (
-      full_name,
-      dob,
-      email,
-      grade,
-      school,
-      board,
-      nationality,
-      gender,
-      guardian_name,
-      relationship,
-      guardian_email,
-      guardian_phone,
-      alt_phone,
-      batch,
-      experience,
-      guidelines_accepted,
-      conduct_accepted
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      payload.full_name,
-      payload.dob,
-      payload.email,
-      payload.grade,
-      payload.school,
-      payload.board,
-      payload.nationality,
-      payload.gender,
-      payload.guardian_name,
-      payload.relationship,
-      payload.guardian_email,
-      payload.guardian_phone,
-      payload.alt_phone,
-      payload.batch,
-      payload.experience,
-      payload.guidelines_accepted,
-      payload.conduct_accepted,
-    ]
-  );
+  const baseColumns = [
+    'full_name',
+    'dob',
+    'email',
+    'grade',
+    'school',
+    'board',
+    'nationality',
+    'gender',
+    'guardian_name',
+    'relationship',
+    'guardian_email',
+    'guardian_phone',
+    'alt_phone',
+    'batch',
+    'experience',
+    'guidelines_accepted',
+    'conduct_accepted',
+  ];
+
+  const baseValues = [
+    payload.full_name,
+    payload.dob,
+    payload.email,
+    payload.grade,
+    payload.school,
+    payload.board,
+    payload.nationality,
+    payload.gender,
+    payload.guardian_name,
+    payload.relationship,
+    payload.guardian_email,
+    payload.guardian_phone,
+    payload.alt_phone,
+    payload.batch,
+    payload.experience,
+    payload.guidelines_accepted,
+    payload.conduct_accepted,
+  ];
+
+  const paymentColumns = [
+    'payment_amount',
+    'payment_currency',
+    'razorpay_order_id',
+    'razorpay_payment_id',
+    'payment_status',
+    'payment_mode',
+  ];
+
+  const valuesWithPayment = [
+    ...baseValues,
+    normalizePaymentAmount(payload.payment_amount),
+    toNullableUpperText(payload.payment_currency),
+    toNullableText(payload.razorpay_order_id),
+    toNullableText(payload.razorpay_payment_id),
+    toNullableText(payload.payment_status),
+    toNullableText(payload.payment_mode),
+  ];
+
+  let result = null;
+
+  try {
+    const columnsWithPayment = [...baseColumns, ...paymentColumns];
+    const placeholders = columnsWithPayment.map(() => '?').join(', ');
+
+    const [insertResult] = await connection.query(
+      `INSERT INTO ${STUDENT_REGISTRATION_TABLE} (${columnsWithPayment.join(', ')})
+       VALUES (${placeholders})`,
+      valuesWithPayment
+    );
+
+    result = insertResult;
+  } catch (err) {
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
+      throw err;
+    }
+
+    const basePlaceholders = baseColumns.map(() => '?').join(', ');
+    const [fallbackResult] = await connection.query(
+      `INSERT INTO ${STUDENT_REGISTRATION_TABLE} (${baseColumns.join(', ')})
+       VALUES (${basePlaceholders})`,
+      baseValues
+    );
+
+    result = fallbackResult;
+  }
 
   const createdId = Number(result.insertId);
   const [rows] = await connection.query(
@@ -305,6 +429,23 @@ async function createStudentRegistration(payload, connection = db) {
   );
 
   return rows[0] ? mapStudentRegistrationRow(rows[0]) : null;
+}
+
+async function isStudentEmailTaken(email, connection = db) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return false;
+  }
+
+  const [rows] = await connection.query(
+    `SELECT id
+     FROM ${STUDENT_REGISTRATION_TABLE}
+     WHERE LOWER(email) = LOWER(?)
+     LIMIT 1`,
+    [normalizedEmail]
+  );
+
+  return rows.length > 0;
 }
 
 async function getStudentRegistrations(connection = db) {
@@ -325,4 +466,5 @@ module.exports = {
   ensureStudentRegistrationTable,
   createStudentRegistration,
   getStudentRegistrations,
+  isStudentEmailTaken,
 };
