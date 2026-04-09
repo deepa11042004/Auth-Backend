@@ -51,6 +51,10 @@ const options = {
         name: 'Summer School',
         description: 'Summer school student registration endpoints',
       },
+      {
+        name: 'Institutional Registrations',
+        description: 'Institutional registration form submission endpoints',
+      },
     ],
   },
   apis: ['./src/routes/*.js'],
