@@ -10,6 +10,7 @@ const mentorRoutes = require('./routes/mentorRoutes');
 const internshipRoutes = require('./routes/internshipRoutes');
 const summerSchoolRoutes = require('./routes/summerSchoolRoutes');
 const institutionalRegistrationRoutes = require('./routes/institutionalRegistrationRoutes');
+const contactQueryRoutes = require('./routes/contactQueryRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
 
@@ -37,6 +38,7 @@ app.use('/api', mentorRoutes);
 app.use('/api', internshipRoutes);
 app.use('/api', summerSchoolRoutes);
 app.use('/api', institutionalRegistrationRoutes);
+app.use('/api', contactQueryRoutes);
 
 app.use(errorHandler);
 
