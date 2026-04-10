@@ -239,7 +239,7 @@ function normalizeRegistrationPayload(input) {
     dob: cleanText(input.dob),
     mobile_number: cleanText(input.mobile_number || input.contact_number),
     email: normalizeEmail(input.email),
-    alternative_email: normalizeEmail(input.alternative_email) || null,
+    alternative_email: normalizeEmail(input.alternative_email),
     address: cleanText(input.address),
     city: cleanText(input.city),
     state: cleanText(input.state),
@@ -281,7 +281,9 @@ function normalizeRegistrationPayload(input) {
     errors.push('Invalid email format');
   }
 
-  if (payload.alternative_email && !EMAIL_REGEX.test(payload.alternative_email)) {
+  if (!payload.alternative_email) {
+    errors.push('alternative_email is required');
+  } else if (!EMAIL_REGEX.test(payload.alternative_email)) {
     errors.push('Invalid alternative_email format');
   }
 

@@ -36,6 +36,7 @@ const studentRegistrationSchema = Object.freeze({
   full_name: { type: String, required: true },
   dob: { type: String, required: true },
   email: { type: String, required: true },
+  alternative_email: { type: String, required: true },
   grade: { type: String, required: true },
   school: { type: String, required: true },
   board: { type: String, required: true },
@@ -137,6 +138,9 @@ function normalizeStudentRegistrationPayload(input = {}) {
     full_name: cleanText(input.full_name || input.fullName),
     dob: cleanText(input.dob),
     email: normalizeEmail(input.email),
+    alternative_email: normalizeEmail(
+      input.alternative_email || input.alternativeEmail || input.altEmail
+    ),
     grade: cleanText(input.grade),
     school: cleanText(input.school),
     board: cleanText(input.board),
@@ -167,6 +171,12 @@ function normalizeStudentRegistrationPayload(input = {}) {
     errors.push('email is required');
   } else if (!EMAIL_REGEX.test(payload.email)) {
     errors.push('Invalid email format');
+  }
+
+  if (!payload.alternative_email) {
+    errors.push('alternative_email is required');
+  } else if (!EMAIL_REGEX.test(payload.alternative_email)) {
+    errors.push('Invalid alternative_email format');
   }
 
   if (!payload.grade) {
@@ -227,6 +237,7 @@ async function ensureStudentRegistrationTable(connection = db) {
       full_name VARCHAR(255) NOT NULL,
       dob DATE NOT NULL,
       email VARCHAR(255) NOT NULL,
+      alternative_email VARCHAR(255) NULL,
       grade VARCHAR(80) NOT NULL,
       school VARCHAR(255) NOT NULL,
       board VARCHAR(120) NOT NULL,
@@ -267,6 +278,17 @@ async function ensureStudentRegistrationTable(connection = db) {
     );
   }
 
+  const [alternativeEmailColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${STUDENT_REGISTRATION_TABLE} LIKE 'alternative_email'`
+  );
+
+  if (alternativeEmailColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${STUDENT_REGISTRATION_TABLE}
+       ADD COLUMN alternative_email VARCHAR(255) NULL AFTER email`
+    );
+  }
+
   for (const paymentColumn of PAYMENT_COLUMNS) {
     const [column] = await connection.query(
       `SHOW COLUMNS FROM ${STUDENT_REGISTRATION_TABLE} LIKE ?`,
@@ -293,6 +315,7 @@ function mapStudentRegistrationRow(row) {
     full_name: cleanText(row.full_name),
     dob: formatDate(row.dob),
     email: cleanText(row.email),
+    alternative_email: cleanText(row.alternative_email),
     grade: cleanText(row.grade),
     school: cleanText(row.school),
     board: cleanText(row.board),
@@ -336,6 +359,7 @@ async function createStudentRegistration(payload, connection = db) {
     'full_name',
     'dob',
     'email',
+    'alternative_email',
     'grade',
     'school',
     'board',
@@ -356,6 +380,7 @@ async function createStudentRegistration(payload, connection = db) {
     payload.full_name,
     payload.dob,
     payload.email,
+    payload.alternative_email,
     payload.grade,
     payload.school,
     payload.board,
