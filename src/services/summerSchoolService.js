@@ -1,17 +1,19 @@
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
 
+const db = require('../config/db');
 const StudentRegistration = require('../models/StudentRegistration');
 
-const SUMMER_SCHOOL_REGISTRATION_FEES = Object.freeze({
-  Indian: {
-    amount: 1750,
-    currency: 'INR',
-  },
-  Other: {
-    amount: 150,
-    currency: 'USD',
-  },
+const SUMMER_SCHOOL_SETTINGS_TABLE = 'summer_school_registration_settings';
+const DEFAULT_INDIAN_FEE_AMOUNT = 1750;
+const DEFAULT_OTHER_FEE_AMOUNT = 150;
+const DEFAULT_BATCH_OPTIONS = Object.freeze([
+  'Batch 1: 15th May - 30th June',
+  'Batch 2: 19th June - 30th July',
+]);
+const SUMMER_SCHOOL_PAYMENT_CURRENCIES = Object.freeze({
+  Indian: 'INR',
+  Other: 'USD',
 });
 
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
@@ -54,21 +56,127 @@ function normalizeNationality(value) {
   return '';
 }
 
-function resolveSummerSchoolPaymentConfig(nationality) {
+function toFeeAmount(value, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return fallback;
+  }
+
+  return Number(numeric.toFixed(2));
+}
+
+function parseFeeAmountInput(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return null;
+  }
+
+  return Number(numeric.toFixed(2));
+}
+
+function normalizeBatchOptions(rawOptions) {
+  const source = Array.isArray(rawOptions) ? rawOptions : [];
+  const normalized = source
+    .map((option) => cleanText(option))
+    .filter(Boolean);
+
+  return [...new Set(normalized)];
+}
+
+function parseBatchOptionsInput(value) {
+  if (Array.isArray(value)) {
+    return normalizeBatchOptions(value);
+  }
+
+  if (typeof value === 'string') {
+    const options = value
+      .split(/\r?\n/)
+      .map((option) => option.trim())
+      .filter(Boolean);
+
+    return normalizeBatchOptions(options);
+  }
+
+  return [];
+}
+
+async function ensureSummerSchoolSettingsSchema(connection = db) {
+  await connection.query(
+    `CREATE TABLE IF NOT EXISTS ${SUMMER_SCHOOL_SETTINGS_TABLE} (
+      id TINYINT PRIMARY KEY,
+      indian_fee_amount DECIMAL(10,2) NOT NULL DEFAULT 1750.00,
+      other_fee_amount DECIMAL(10,2) NOT NULL DEFAULT 150.00,
+      batch_options_json TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`
+  );
+
+  await connection.query(
+    `INSERT INTO ${SUMMER_SCHOOL_SETTINGS_TABLE} (id, indian_fee_amount, other_fee_amount, batch_options_json)
+     VALUES (1, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE id = id`,
+    [
+      DEFAULT_INDIAN_FEE_AMOUNT,
+      DEFAULT_OTHER_FEE_AMOUNT,
+      JSON.stringify(DEFAULT_BATCH_OPTIONS),
+    ]
+  );
+}
+
+function parseStoredBatchOptions(rawValue) {
+  if (typeof rawValue !== 'string' || !rawValue.trim()) {
+    return [...DEFAULT_BATCH_OPTIONS];
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue);
+    const normalized = normalizeBatchOptions(parsed);
+    return normalized.length > 0 ? normalized : [...DEFAULT_BATCH_OPTIONS];
+  } catch {
+    return [...DEFAULT_BATCH_OPTIONS];
+  }
+}
+
+async function readSummerSchoolSettings(connection = db) {
+  await ensureSummerSchoolSettingsSchema(connection);
+
+  const [rows] = await connection.query(
+    `SELECT indian_fee_amount, other_fee_amount, batch_options_json
+     FROM ${SUMMER_SCHOOL_SETTINGS_TABLE}
+     WHERE id = 1
+     LIMIT 1`
+  );
+
+  const row = rows[0] || {};
+
+  return {
+    indian_fee_amount: toFeeAmount(row.indian_fee_amount, DEFAULT_INDIAN_FEE_AMOUNT),
+    other_fee_amount: toFeeAmount(row.other_fee_amount, DEFAULT_OTHER_FEE_AMOUNT),
+    batch_options: parseStoredBatchOptions(row.batch_options_json),
+  };
+}
+
+function resolveSummerSchoolPaymentConfig(nationality, settings) {
   const normalizedNationality = normalizeNationality(nationality);
   if (!normalizedNationality) {
     return null;
   }
 
-  const registrationFee = SUMMER_SCHOOL_REGISTRATION_FEES[normalizedNationality];
-  if (!registrationFee) {
-    return null;
-  }
+  const amount =
+    normalizedNationality === 'Indian'
+      ? settings.indian_fee_amount
+      : settings.other_fee_amount;
+  const currency = SUMMER_SCHOOL_PAYMENT_CURRENCIES[normalizedNationality];
 
   return {
     nationality: normalizedNationality,
-    amount: registrationFee.amount,
-    currency: registrationFee.currency,
+    amount,
+    currency,
   };
 }
 
@@ -180,7 +288,8 @@ async function createPaymentOrder(payload) {
   await StudentRegistration.ensureStudentRegistrationTable();
 
   const email = normalizeEmail(payload?.email);
-  const paymentConfig = resolveSummerSchoolPaymentConfig(payload?.nationality);
+  const settings = await readSummerSchoolSettings();
+  const paymentConfig = resolveSummerSchoolPaymentConfig(payload?.nationality, settings);
 
   if (!email) {
     return {
@@ -290,7 +399,8 @@ async function verifyPaymentAndRegister(payload) {
     };
   }
 
-  const paymentConfig = resolveSummerSchoolPaymentConfig(normalizedPayload.nationality);
+  const settings = await readSummerSchoolSettings();
+  const paymentConfig = resolveSummerSchoolPaymentConfig(normalizedPayload.nationality, settings);
   if (!paymentConfig) {
     return {
       status: 400,
@@ -439,9 +549,75 @@ async function listStudentRegistrations() {
   };
 }
 
+async function getSummerSchoolRegistrationSettings() {
+  const settings = await readSummerSchoolSettings();
+
+  return {
+    status: 200,
+    body: settings,
+  };
+}
+
+async function updateSummerSchoolRegistrationSettings(payload) {
+  const currentSettings = await readSummerSchoolSettings();
+
+  const hasIndianFee = Object.prototype.hasOwnProperty.call(payload || {}, 'indian_fee_amount');
+  const hasOtherFee = Object.prototype.hasOwnProperty.call(payload || {}, 'other_fee_amount');
+  const hasBatchOptions = Object.prototype.hasOwnProperty.call(payload || {}, 'batch_options');
+
+  const indianFeeAmount = hasIndianFee
+    ? parseFeeAmountInput(payload.indian_fee_amount)
+    : currentSettings.indian_fee_amount;
+  const otherFeeAmount = hasOtherFee
+    ? parseFeeAmountInput(payload.other_fee_amount)
+    : currentSettings.other_fee_amount;
+  const batchOptions = hasBatchOptions
+    ? parseBatchOptionsInput(payload.batch_options)
+    : currentSettings.batch_options;
+
+  if (indianFeeAmount === null || otherFeeAmount === null) {
+    return {
+      status: 400,
+      body: {
+        message: 'indian_fee_amount and other_fee_amount must be non-negative numbers',
+      },
+    };
+  }
+
+  if (batchOptions.length === 0) {
+    return {
+      status: 400,
+      body: {
+        message: 'At least one batch option is required',
+      },
+    };
+  }
+
+  await ensureSummerSchoolSettingsSchema();
+
+  await db.query(
+    `UPDATE ${SUMMER_SCHOOL_SETTINGS_TABLE}
+     SET indian_fee_amount = ?, other_fee_amount = ?, batch_options_json = ?
+     WHERE id = 1`,
+    [indianFeeAmount, otherFeeAmount, JSON.stringify(batchOptions)]
+  );
+
+  const updatedSettings = await readSummerSchoolSettings();
+
+  return {
+    status: 200,
+    body: {
+      ...updatedSettings,
+      message: 'Summer school registration settings updated successfully',
+    },
+  };
+}
+
 module.exports = {
   registerStudent,
   createPaymentOrder,
   verifyPaymentAndRegister,
   listStudentRegistrations,
+  getSummerSchoolRegistrationSettings,
+  updateSummerSchoolRegistrationSettings,
 };

@@ -34,4 +34,14 @@ router.get(
   summerSchoolController.getStudentRegistrations
 );
 
+router.get(
+  '/summer-school/student-registration/settings',
+  summerSchoolController.getSummerSchoolRegistrationSettings
+);
+
+router.put(
+  '/summer-school/student-registration/settings',
+  summerSchoolController.updateSummerSchoolRegistrationSettings
+);
+
 module.exports = router;

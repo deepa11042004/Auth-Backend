@@ -36,9 +36,29 @@ async function getStudentRegistrations(req, res, next) {
   }
 }
 
+async function getSummerSchoolRegistrationSettings(req, res, next) {
+  try {
+    const result = await summerSchoolService.getSummerSchoolRegistrationSettings();
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function updateSummerSchoolRegistrationSettings(req, res, next) {
+  try {
+    const result = await summerSchoolService.updateSummerSchoolRegistrationSettings(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
   createStudentRegistration,
   getStudentRegistrations,
+  getSummerSchoolRegistrationSettings,
+  updateSummerSchoolRegistrationSettings,
 };
