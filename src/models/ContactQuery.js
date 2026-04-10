@@ -106,6 +106,7 @@ async function ensureContactQueryTable(connection = db) {
 function mapContactQueryRow(row) {
   const fullName = cleanText(row.full_name);
   const subject = cleanText(row.subject);
+  const createdAtUnix = Number(row.created_at_unix);
 
   return {
     id: Number(row.id),
@@ -118,6 +119,9 @@ function mapContactQueryRow(row) {
     message: cleanText(row.message),
     source_path: cleanText(row.source_path) || null,
     created_at: formatDateTime(row.created_at),
+    created_at_unix: Number.isFinite(createdAtUnix) && createdAtUnix > 0
+      ? createdAtUnix
+      : null,
     updated_at: formatDateTime(row.updated_at),
   };
 }
@@ -144,7 +148,7 @@ async function createContactQuery(payload, connection = db) {
   const createdId = Number(insertResult.insertId);
 
   const [rows] = await connection.query(
-    `SELECT *
+    `SELECT *, UNIX_TIMESTAMP(created_at) AS created_at_unix
      FROM ${CONTACT_QUERY_TABLE}
      WHERE id = ?
      LIMIT 1`,
@@ -156,7 +160,7 @@ async function createContactQuery(payload, connection = db) {
 
 async function getContactQueries(connection = db) {
   const [rows] = await connection.query(
-    `SELECT *
+    `SELECT *, UNIX_TIMESTAMP(created_at) AS created_at_unix
      FROM ${CONTACT_QUERY_TABLE}
      ORDER BY created_at DESC, id DESC`
   );
