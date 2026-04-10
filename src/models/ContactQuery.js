@@ -168,10 +168,22 @@ async function getContactQueries(connection = db) {
   return rows.map(mapContactQueryRow);
 }
 
+async function deleteContactQuery(id, connection = db) {
+  const [result] = await connection.query(
+    `DELETE FROM ${CONTACT_QUERY_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [id]
+  );
+
+  return Number(result.affectedRows) > 0;
+}
+
 module.exports = {
   CONTACT_QUERY_TABLE,
   normalizeContactQueryPayload,
   ensureContactQueryTable,
   createContactQuery,
   getContactQueries,
+  deleteContactQuery,
 };

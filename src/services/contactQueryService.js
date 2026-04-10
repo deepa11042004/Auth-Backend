@@ -1,5 +1,15 @@
 const ContactQuery = require('../models/ContactQuery');
 
+function parseContactQueryId(rawId) {
+  const parsed = Number.parseInt(String(rawId || ''), 10);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
 async function submitContactQuery(payload) {
   await ContactQuery.ensureContactQueryTable();
 
@@ -45,7 +55,44 @@ async function listContactQueries() {
   };
 }
 
+async function removeContactQuery(rawId) {
+  await ContactQuery.ensureContactQueryTable();
+
+  const id = parseContactQueryId(rawId);
+
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid contact query id',
+      },
+    };
+  }
+
+  const wasDeleted = await ContactQuery.deleteContactQuery(id);
+
+  if (!wasDeleted) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Contact query not found',
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Contact query deleted successfully',
+    },
+  };
+}
+
 module.exports = {
   submitContactQuery,
   listContactQueries,
+  removeContactQuery,
 };

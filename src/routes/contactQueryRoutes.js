@@ -16,5 +16,6 @@ const router = express.Router();
  */
 router.post('/contact-queries', contactQueryController.createContactQuery);
 router.get('/contact-queries', contactQueryController.getContactQueries);
+router.delete('/contact-queries/:id', contactQueryController.deleteContactQuery);
 
 module.exports = router;

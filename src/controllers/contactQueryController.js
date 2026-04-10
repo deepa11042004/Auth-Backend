@@ -18,7 +18,17 @@ async function getContactQueries(req, res, next) {
   }
 }
 
+async function deleteContactQuery(req, res, next) {
+  try {
+    const result = await contactQueryService.removeContactQuery(req.params.id);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   createContactQuery,
   getContactQueries,
+  deleteContactQuery,
 };
