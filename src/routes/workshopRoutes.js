@@ -42,6 +42,11 @@ const router = express.Router();
  *                 type: string
  *                 enum: [Indian, Others]
  *                 example: Indian
+ *               country:
+ *                 type: string
+ *                 nullable: true
+ *                 description: Required when nationality is Others
+ *                 example: United States
  *               agree_recording:
  *                 type: boolean
  *                 example: true

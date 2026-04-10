@@ -18,6 +18,7 @@ const PAYMENT_FETCH_RETRY_DELAY_MS = 1200;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ALLOWED_DESIGNATIONS = new Set(['Student', 'Faculty', 'Professional', 'Others']);
 const ALLOWED_NATIONALITIES = new Set(['Indian', 'Others']);
+const COUNTRY_MAX_LENGTH = 120;
 
 function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -233,6 +234,33 @@ async function incrementWorkshopEnrollmentCounter(connection, workshopId) {
   }
 }
 
+async function ensureCountryColumn(connection) {
+  const [countryColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${REGISTRATION_TABLE} LIKE 'country'`
+  );
+
+  if (countryColumn.length > 0) {
+    return;
+  }
+
+  try {
+    await connection.query(
+      `ALTER TABLE ${REGISTRATION_TABLE} ADD COLUMN country VARCHAR(${COUNTRY_MAX_LENGTH}) NULL`
+    );
+  } catch (err) {
+    if (!err) {
+      throw err;
+    }
+
+    // If another process added the column first, continue safely.
+    if (err.code === 'ER_DUP_FIELDNAME') {
+      return;
+    }
+
+    throw err;
+  }
+}
+
 async function insertWorkshopRegistrationRecord(connection, payload) {
   const baseColumns = [
     'workshop_id',
@@ -243,21 +271,9 @@ async function insertWorkshopRegistrationRecord(connection, payload) {
     'institution',
     'designation',
     'nationality',
+    'country',
     'agree_recording',
     'agree_terms',
-  ];
-
-  const baseValues = [
-    payload.workshopId,
-    payload.fullName,
-    payload.email,
-    payload.contactNumber,
-    payload.alternativeEmail,
-    payload.institution,
-    payload.designation,
-    payload.nationality,
-    payload.agreeRecording,
-    payload.agreeTerms,
   ];
 
   const paymentColumns = [
@@ -269,77 +285,70 @@ async function insertWorkshopRegistrationRecord(connection, payload) {
     'payment_mode',
   ];
 
-  const valuesWithPayment = [
-    ...baseValues,
-    payload.paymentAmount,
-    payload.paymentCurrency,
-    payload.razorpayOrderId,
-    payload.razorpayPaymentId,
-    payload.paymentStatus,
-    payload.paymentMode,
+  const legacyColumns = [
+    'workshop_id',
+    'full_name',
+    'email',
+    'contact_number',
+    'alternative_email',
+    'institution',
+    'designation',
+    'agree_recording',
+    'agree_terms',
   ];
 
-  try {
-    const columnsWithPayment = [...baseColumns, ...paymentColumns];
-    const placeholdersWithPayment = columnsWithPayment.map(() => '?').join(', ');
+  const columnValueMap = {
+    workshop_id: payload.workshopId,
+    full_name: payload.fullName,
+    email: payload.email,
+    contact_number: payload.contactNumber,
+    alternative_email: payload.alternativeEmail,
+    institution: payload.institution,
+    designation: payload.designation,
+    nationality: payload.nationality,
+    country: payload.country,
+    agree_recording: payload.agreeRecording,
+    agree_terms: payload.agreeTerms,
+    payment_amount: payload.paymentAmount,
+    payment_currency: payload.paymentCurrency,
+    razorpay_order_id: payload.razorpayOrderId,
+    razorpay_payment_id: payload.razorpayPaymentId,
+    payment_status: payload.paymentStatus,
+    payment_mode: payload.paymentMode,
+  };
 
-    await connection.query(
-      `INSERT INTO ${REGISTRATION_TABLE} (${columnsWithPayment.join(', ')})
-       VALUES (${placeholdersWithPayment})`,
-      valuesWithPayment
-    );
-  } catch (err) {
-    // Keep registration functional before schema migrations are applied.
-    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
-      throw err;
-    }
+  const columnsWithPayment = [...baseColumns, ...paymentColumns];
+  const baseColumnsWithoutCountry = baseColumns.filter((column) => column !== 'country');
 
+  const insertAttempts = [
+    columnsWithPayment,
+    baseColumns,
+    [...baseColumnsWithoutCountry, ...paymentColumns],
+    baseColumnsWithoutCountry,
+    legacyColumns,
+  ];
+
+  for (const columns of insertAttempts) {
     try {
-      const basePlaceholders = baseColumns.map(() => '?').join(', ');
+      const placeholders = columns.map(() => '?').join(', ');
+      const values = columns.map((column) => columnValueMap[column]);
+
       await connection.query(
-        `INSERT INTO ${REGISTRATION_TABLE} (${baseColumns.join(', ')})
-         VALUES (${basePlaceholders})`,
-        baseValues
+        `INSERT INTO ${REGISTRATION_TABLE} (${columns.join(', ')})
+         VALUES (${placeholders})`,
+        values
       );
 
       return;
-    } catch (fallbackErr) {
-      if (!fallbackErr || fallbackErr.code !== 'ER_BAD_FIELD_ERROR') {
-        throw fallbackErr;
+    } catch (err) {
+      // Keep registration functional before schema migrations are applied.
+      if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
+        throw err;
       }
-
-      const legacyColumns = [
-        'workshop_id',
-        'full_name',
-        'email',
-        'contact_number',
-        'alternative_email',
-        'institution',
-        'designation',
-        'agree_recording',
-        'agree_terms',
-      ];
-
-      const legacyValues = [
-        payload.workshopId,
-        payload.fullName,
-        payload.email,
-        payload.contactNumber,
-        payload.alternativeEmail,
-        payload.institution,
-        payload.designation,
-        payload.agreeRecording,
-        payload.agreeTerms,
-      ];
-
-      const legacyPlaceholders = legacyColumns.map(() => '?').join(', ');
-      await connection.query(
-        `INSERT INTO ${REGISTRATION_TABLE} (${legacyColumns.join(', ')})
-         VALUES (${legacyPlaceholders})`,
-        legacyValues
-      );
     }
   }
+
+  throw new Error('Unable to insert workshop registration record');
 }
 
 async function createPaymentOrder(input) {
@@ -605,6 +614,7 @@ async function registerForWorkshop(input) {
   const institution = cleanText(input.institution);
   const designation = normalizeDesignation(input.designation);
   const nationality = normalizeNationality(input.nationality);
+  const country = toNullableText(input.country);
   const agreeRecording = toBoolean(input.agree_recording);
   const agreeTerms = toBoolean(input.agree_terms);
   const workshopId = resolveWorkshopId(input || {});
@@ -675,6 +685,22 @@ async function registerForWorkshop(input) {
     };
   }
 
+  const resolvedCountry = nationality === 'Others' ? country : null;
+
+  if (nationality === 'Others' && !resolvedCountry) {
+    return {
+      status: 400,
+      body: { message: 'country is required when nationality is Others' },
+    };
+  }
+
+  if (resolvedCountry && resolvedCountry.length > COUNTRY_MAX_LENGTH) {
+    return {
+      status: 400,
+      body: { message: `country must be at most ${COUNTRY_MAX_LENGTH} characters` },
+    };
+  }
+
   if (!agreeRecording || !agreeTerms) {
     return {
       status: 400,
@@ -685,6 +711,8 @@ async function registerForWorkshop(input) {
   const connection = await db.getConnection();
 
   try {
+    await ensureCountryColumn(connection);
+
     await connection.beginTransaction();
 
     const [workshopRows] = await connection.query(
@@ -726,6 +754,7 @@ async function registerForWorkshop(input) {
         institution,
         designation,
         nationality,
+        country: resolvedCountry,
         agreeRecording,
         agreeTerms,
         paymentAmount: resolvedPaymentAmount,
