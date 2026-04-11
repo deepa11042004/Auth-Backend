@@ -48,6 +48,7 @@ router.post('/mentor/create-order', mentorRegistrationController.createPaymentOr
 router.get('/mentor/requests', mentorRegistrationController.getPendingMentors);
 router.get('/mentor/list', mentorRegistrationController.getActiveMentors);
 router.patch('/mentor/:id/approve', mentorRegistrationController.approveMentor);
+router.patch('/mentor/:id/pending', mentorRegistrationController.moveMentorToPending);
 router.delete('/mentor/:id/reject', mentorRegistrationController.rejectMentor);
 
 router.get('/mentor/:id', mentorRegistrationController.getMentorById);

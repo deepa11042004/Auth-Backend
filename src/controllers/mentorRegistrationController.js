@@ -539,6 +539,49 @@ async function approveMentor(req, res) {
   }
 }
 
+async function moveMentorToPending(req, res) {
+  try {
+    const mentorId = parseMentorId(req.params.id);
+    if (!mentorId) {
+      return res.status(400).json({ error: 'Invalid mentor id.' });
+    }
+
+    const result = await mentorRegistrationService.moveMentorToPendingById(mentorId);
+
+    if (result.outcome === 'status_column_missing') {
+      return res.status(500).json({
+        error:
+          "Mentor status is not configured. Apply migration: ALTER TABLE mentor_registrations ADD COLUMN status ENUM('pending', 'active') DEFAULT 'pending';",
+      });
+    }
+
+    if (result.outcome === 'not_found') {
+      return res.status(404).json({ error: 'Mentor not found.' });
+    }
+
+    if (result.outcome === 'already_pending') {
+      return res.status(200).json({
+        message: 'Mentor is already pending.',
+        mentor: result.mentor || null,
+      });
+    }
+
+    if (result.outcome === 'invalid_status') {
+      return res.status(409).json({
+        error: `Mentor cannot be moved to pending from status: ${result.status}`,
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Mentor moved to pending successfully',
+      mentor: result.mentor || null,
+    });
+  } catch (err) {
+    console.error('Move mentor to pending error:', err);
+    return res.status(500).json({ error: 'Failed to move mentor to pending' });
+  }
+}
+
 async function rejectMentor(req, res) {
   try {
     const mentorId = parseMentorId(req.params.id);
@@ -570,5 +613,6 @@ module.exports = {
   getPendingMentors,
   getActiveMentors,
   approveMentor,
+  moveMentorToPending,
   rejectMentor,
 };

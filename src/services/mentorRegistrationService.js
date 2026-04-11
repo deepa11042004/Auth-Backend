@@ -792,6 +792,53 @@ async function approveMentorById(id) {
   }
 }
 
+async function moveMentorToPendingById(id) {
+  try {
+    const [rows] = await db.query(
+      `SELECT id, status
+       FROM ${MENTOR_REGISTRATION_TABLE}
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return { outcome: 'not_found' };
+    }
+
+    const currentStatus = String(rows[0].status || '').trim().toLowerCase();
+
+    if (currentStatus === MENTOR_STATUS_PENDING) {
+      const mentor = await getMentorById(id);
+      return { outcome: 'already_pending', mentor };
+    }
+
+    if (currentStatus && currentStatus !== MENTOR_STATUS_ACTIVE) {
+      return { outcome: 'invalid_status', status: currentStatus };
+    }
+
+    await db.query(
+      `UPDATE ${MENTOR_REGISTRATION_TABLE}
+       SET status = ?
+       WHERE id = ?`,
+      [MENTOR_STATUS_PENDING, id]
+    );
+
+    const mentor = await getMentorById(id);
+
+    return {
+      outcome: 'moved_to_pending',
+      mentor,
+    };
+  } catch (err) {
+    if (err && err.code === 'ER_BAD_FIELD_ERROR') {
+      return { outcome: 'status_column_missing' };
+    }
+
+    throw err;
+  }
+}
+
 async function rejectMentorById(id) {
   const [result] = await db.query(
     `DELETE FROM ${MENTOR_REGISTRATION_TABLE}
@@ -839,5 +886,6 @@ module.exports = {
   getPendingMentors,
   getActiveMentors,
   approveMentorById,
+  moveMentorToPendingById,
   rejectMentorById,
 };
