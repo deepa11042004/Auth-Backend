@@ -11,6 +11,8 @@ const TOTAL_ENROLLMENTS_COLUMN = 'total_enrollments';
 const DEFAULT_WORKSHOP_ID = 1;
 const PAYMENT_CURRENCY = 'INR';
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
+const COMPLETED_PAYMENT_STATUSES = new Set(['captured', 'authorized', 'not_required']);
+const FAILED_PAYMENT_STATUSES = new Set(['failed', 'cancelled', 'canceled']);
 const TRANSIENT_PAYMENT_STATUSES = new Set(['created', 'pending']);
 const PAYMENT_FETCH_RETRY_ATTEMPTS = 6;
 const PAYMENT_FETCH_RETRY_DELAY_MS = 1200;
@@ -31,6 +33,32 @@ function normalizeEmail(value) {
 function toNullableText(value) {
   const cleaned = cleanText(value);
   return cleaned || null;
+}
+
+function normalizePaymentStatus(value) {
+  const normalized = toNullableText(value)?.toLowerCase() || null;
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === 'cancelled' || normalized === 'canceled') {
+    return 'failed';
+  }
+
+  return normalized;
+}
+
+function isCompletedRegistrationStatus(value) {
+  if (!value) {
+    // Legacy rows may not have payment_status populated; treat them as completed.
+    return true;
+  }
+
+  return COMPLETED_PAYMENT_STATUSES.has(value);
+}
+
+function isFailedPaymentStatus(value) {
+  return Boolean(value) && FAILED_PAYMENT_STATUSES.has(value);
 }
 
 function toBoolean(value) {
@@ -207,9 +235,17 @@ async function getWorkshopById(workshopId, connection = db) {
   };
 }
 
-async function hasExistingRegistration(workshopId, email, connection = db) {
+async function hasExistingCompletedRegistration(workshopId, email, connection = db) {
   const [rows] = await connection.query(
-    `SELECT id FROM ${REGISTRATION_TABLE} WHERE workshop_id = ? AND email = ? LIMIT 1`,
+    `SELECT id
+     FROM ${REGISTRATION_TABLE}
+     WHERE workshop_id = ?
+       AND email = ?
+       AND (
+         payment_status IS NULL
+         OR LOWER(payment_status) IN ('captured', 'authorized', 'not_required')
+       )
+     LIMIT 1`,
     [workshopId, email]
   );
 
@@ -376,7 +412,7 @@ async function createPaymentOrder(input) {
     };
   }
 
-  if (payerEmail && (await hasExistingRegistration(workshopId, payerEmail))) {
+  if (payerEmail && (await hasExistingCompletedRegistration(workshopId, payerEmail))) {
     return {
       status: 200,
       body: {
@@ -622,7 +658,7 @@ async function registerForWorkshop(input) {
   const paymentCurrency = toNullableText(input.payment_currency)?.toUpperCase() || null;
   const razorpayOrderId = toNullableText(input.razorpay_order_id);
   const razorpayPaymentId = toNullableText(input.razorpay_payment_id);
-  const paymentStatus = toNullableText(input.payment_status)?.toLowerCase() || null;
+  const paymentStatus = normalizePaymentStatus(input.payment_status);
   const paymentMode = toNullableText(input.payment_mode);
 
   if (!workshopId) {
@@ -730,6 +766,25 @@ async function registerForWorkshop(input) {
 
     const workshopFeeRupees = toMoneyRupees(workshopRows[0].fee);
     const hasPaymentIdentifiers = Boolean(razorpayOrderId || razorpayPaymentId);
+    const isPaidWorkshop = workshopFeeRupees !== null && workshopFeeRupees > 0;
+    const isFailedAttempt = isFailedPaymentStatus(paymentStatus);
+
+    if (isPaidWorkshop && !paymentStatus && !hasPaymentIdentifiers) {
+      await connection.rollback();
+      return {
+        status: 400,
+        body: { message: 'Payment is required before workshop registration submission' },
+      };
+    }
+
+    if (isPaidWorkshop && paymentStatus === 'not_required') {
+      await connection.rollback();
+      return {
+        status: 400,
+        body: { message: 'payment_status not_required is invalid for paid workshop registration' },
+      };
+    }
+
     const resolvedPaymentAmount =
       paymentAmount !== null
         ? paymentAmount
@@ -742,7 +797,9 @@ async function registerForWorkshop(input) {
         ? 'not_required'
         : (hasPaymentIdentifiers ? 'captured' : 'pending'));
     const resolvedPaymentMode =
-      paymentMode || (resolvedPaymentAmount === 0 ? 'free' : null);
+      paymentMode || (resolvedPaymentAmount === 0 ? 'free' : (isFailedAttempt ? 'failed' : null));
+    const shouldFinalizeRegistration = isCompletedRegistrationStatus(resolvedPaymentStatus);
+    let reusedFailedAttempt = false;
 
     try {
       await insertWorkshopRegistrationRecord(connection, {
@@ -766,33 +823,73 @@ async function registerForWorkshop(input) {
       });
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
-        await connection.rollback();
-        return {
-          status: 409,
-          body: { message: 'You have already registered for this workshop' },
-        };
+        const [existingRows] = await connection.query(
+          `SELECT id, payment_status
+           FROM ${REGISTRATION_TABLE}
+           WHERE workshop_id = ? AND email = ?
+           ORDER BY id DESC
+           LIMIT 1`,
+          [workshopId, email]
+        );
+
+        const existingRow = existingRows[0] || null;
+        const existingStatus = normalizePaymentStatus(existingRow?.payment_status);
+
+        if (existingRow && !isCompletedRegistrationStatus(existingStatus)) {
+          await connection.query(
+            `UPDATE ${REGISTRATION_TABLE}
+             SET payment_amount = ?,
+                 payment_currency = ?,
+                 razorpay_order_id = ?,
+                 razorpay_payment_id = ?,
+                 payment_status = ?,
+                 payment_mode = ?
+             WHERE id = ?
+             LIMIT 1`,
+            [
+              resolvedPaymentAmount,
+              resolvedPaymentCurrency,
+              razorpayOrderId,
+              razorpayPaymentId,
+              resolvedPaymentStatus,
+              resolvedPaymentMode,
+              Number(existingRow.id),
+            ]
+          );
+
+          reusedFailedAttempt = true;
+        } else {
+          await connection.rollback();
+          return {
+            status: 409,
+            body: { message: 'You have already registered for this workshop' },
+          };
+        }
+      } else {
+        throw err;
       }
-      throw err;
     }
 
-    await incrementWorkshopEnrollmentCounter(connection, workshopId);
+    if (shouldFinalizeRegistration) {
+      await incrementWorkshopEnrollmentCounter(connection, workshopId);
 
-    const [existingUsers] = await connection.query(
-      'SELECT id FROM users WHERE email = ? LIMIT 1',
-      [email]
-    );
+      const [existingUsers] = await connection.query(
+        'SELECT id FROM users WHERE email = ? LIMIT 1',
+        [email]
+      );
 
-    if (!existingUsers[0]) {
-      const hashedPassword = await hashPassword(contactNumber);
+      if (!existingUsers[0]) {
+        const hashedPassword = await hashPassword(contactNumber);
 
-      try {
-        await connection.query(
-          'INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)',
-          [fullName, email, hashedPassword, roles.USER]
-        );
-      } catch (err) {
-        if (err.code !== 'ER_DUP_ENTRY') {
-          throw err;
+        try {
+          await connection.query(
+            'INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)',
+            [fullName, email, hashedPassword, roles.USER]
+          );
+        } catch (err) {
+          if (err.code !== 'ER_DUP_ENTRY') {
+            throw err;
+          }
         }
       }
     }
@@ -802,7 +899,11 @@ async function registerForWorkshop(input) {
     return {
       status: 201,
       body: {
-        message: 'Workshop registration successful',
+        message: shouldFinalizeRegistration
+          ? (reusedFailedAttempt
+            ? 'Workshop registration completed successfully'
+            : 'Workshop registration successful')
+          : 'Workshop registration attempt saved with failed payment status',
         registration: {
           workshop_id: workshopId,
           email,

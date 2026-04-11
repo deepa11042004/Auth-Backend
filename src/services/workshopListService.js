@@ -725,6 +725,7 @@ async function getWorkshopParticipants(workshopId) {
       alternative_email,
       institution,
       designation,
+      payment_status,
       agree_recording,
       agree_terms
      FROM ${REGISTRATION_TABLE}
@@ -741,6 +742,7 @@ async function getWorkshopParticipants(workshopId) {
     alternative_email: cleanText(row.alternative_email) || null,
     institution: cleanText(row.institution),
     designation: cleanText(row.designation),
+    payment_status: cleanText(row.payment_status) || null,
     agree_recording: Number(row.agree_recording || 0) === 1,
     agree_terms: Number(row.agree_terms || 0) === 1,
   }));

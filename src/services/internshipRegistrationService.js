@@ -11,6 +11,8 @@ const PAYMENT_CURRENCY = 'INR';
 const DEFAULT_GENERAL_INTERNSHIP_FEE_RUPEES = 100;
 const DEFAULT_LATERAL_INTERNSHIP_FEE_RUPEES = 100;
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
+const COMPLETED_PAYMENT_STATUSES = new Set(['captured', 'authorized', 'not_required']);
+const FAILED_PAYMENT_STATUSES = new Set(['failed', 'cancelled', 'canceled']);
 const TRANSIENT_PAYMENT_STATUSES = new Set(['created', 'pending']);
 const PAYMENT_FETCH_RETRY_ATTEMPTS = 6;
 const PAYMENT_FETCH_RETRY_DELAY_MS = 1200;
@@ -46,6 +48,32 @@ function toBoolean(value) {
 
   const normalized = cleanText(value).toLowerCase();
   return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on';
+}
+
+function normalizePaymentStatus(value) {
+  const normalized = toNullableText(value)?.toLowerCase() || null;
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === 'cancelled' || normalized === 'canceled') {
+    return 'failed';
+  }
+
+  return normalized;
+}
+
+function isCompletedRegistrationStatus(status) {
+  if (!status) {
+    // Legacy rows may not include payment_status; treat them as completed.
+    return true;
+  }
+
+  return COMPLETED_PAYMENT_STATUSES.has(status);
+}
+
+function isFailedPaymentStatus(status) {
+  return Boolean(status) && FAILED_PAYMENT_STATUSES.has(status);
 }
 
 function toMoneyInPaise(value) {
@@ -217,11 +245,15 @@ async function fetchPaymentFromRazorpayWithRetry(razorpayClient, paymentId) {
   return { payment: latestPayment, fetchError: lastError };
 }
 
-async function hasExistingInternshipRegistration(email, connection = db) {
+async function hasExistingCompletedInternshipRegistration(email, connection = db) {
   const [rows] = await connection.query(
     `SELECT id
      FROM ${INTERNSHIP_TABLE}
      WHERE LOWER(email) = LOWER(?)
+       AND (
+         payment_status IS NULL
+         OR LOWER(payment_status) IN ('captured', 'authorized', 'not_required')
+       )
      LIMIT 1`,
     [email]
   );
@@ -402,7 +434,7 @@ async function createInternshipRegistrationRecord(connection, payload, paymentIn
 }
 
 async function registerInternshipInternal(input, paymentInfo, options = {}) {
-  const { requirePhoto = true } = options;
+  const { requirePhoto = true, createUser = true } = options;
   const { payload, errors } = normalizeRegistrationPayload(input || {});
 
   if (requirePhoto && !payload.passport_photo) {
@@ -423,12 +455,24 @@ async function registerInternshipInternal(input, paymentInfo, options = {}) {
   try {
     await connection.beginTransaction();
 
+    const normalizedPaymentStatus = normalizePaymentStatus(paymentInfo?.payment_status);
+
     const [existingRegistrations] = await connection.query(
-      `SELECT id FROM ${INTERNSHIP_TABLE} WHERE LOWER(email) = LOWER(?) LIMIT 1`,
+      `SELECT id, payment_status
+       FROM ${INTERNSHIP_TABLE}
+       WHERE LOWER(email) = LOWER(?)
+       ORDER BY id DESC
+       LIMIT 1`,
       [payload.email]
     );
 
-    if (existingRegistrations[0]) {
+    const existingRow = existingRegistrations[0] || null;
+    const existingStatus = normalizePaymentStatus(existingRow?.payment_status);
+
+    if (
+      existingRow
+      && isCompletedRegistrationStatus(existingStatus)
+    ) {
       await connection.rollback();
       return {
         status: 409,
@@ -436,28 +480,59 @@ async function registerInternshipInternal(input, paymentInfo, options = {}) {
       };
     }
 
+    let reusedFailedAttempt = false;
+
     try {
       await createInternshipRegistrationRecord(connection, payload, paymentInfo);
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') {
-        await connection.rollback();
-        return {
-          status: 409,
-          body: { message: 'You have already applied for this internship' },
-        };
-      }
+        if (existingRow && !isCompletedRegistrationStatus(existingStatus)) {
+          await connection.query(
+            `UPDATE ${INTERNSHIP_TABLE}
+             SET payment_amount = ?,
+                 payment_currency = ?,
+                 razorpay_order_id = ?,
+                 razorpay_payment_id = ?,
+                 payment_status = ?
+             WHERE id = ?
+             LIMIT 1`,
+            [
+              paymentInfo.payment_amount,
+              paymentInfo.payment_currency,
+              paymentInfo.razorpay_order_id,
+              paymentInfo.razorpay_payment_id,
+              paymentInfo.payment_status,
+              Number(existingRow.id),
+            ]
+          );
 
-      throw err;
+          reusedFailedAttempt = true;
+        } else {
+          await connection.rollback();
+          return {
+            status: 409,
+            body: { message: 'You have already applied for this internship' },
+          };
+        }
+      } else {
+        throw err;
+      }
     }
 
-    await createUserIfMissing(connection, payload.email, payload.full_name, payload.mobile_number);
+    if (createUser && isCompletedRegistrationStatus(normalizedPaymentStatus)) {
+      await createUserIfMissing(connection, payload.email, payload.full_name, payload.mobile_number);
+    }
 
     await connection.commit();
 
     return {
       status: 201,
       body: {
-        message: 'Internship application submitted successfully',
+        message: isCompletedRegistrationStatus(normalizedPaymentStatus)
+          ? (reusedFailedAttempt
+            ? 'Internship application submitted successfully after retry'
+            : 'Internship application submitted successfully')
+          : 'Internship application attempt saved with failed payment status',
       },
     };
   } catch (err) {
@@ -486,7 +561,7 @@ async function createPaymentOrder(input) {
     };
   }
 
-  if (await hasExistingInternshipRegistration(applicantEmail)) {
+  if (await hasExistingCompletedInternshipRegistration(applicantEmail)) {
     return {
       status: 200,
       body: {
@@ -694,6 +769,8 @@ async function registerWithoutPayment(input) {
   const feeSettings = await readInternshipFeeSettings();
   const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral);
   const amountInPaise = toMoneyInPaise(internshipFeeRupees);
+  const paymentStatus = normalizePaymentStatus(input?.payment_status);
+  const isFailedAttempt = isFailedPaymentStatus(paymentStatus);
 
   if (amountInPaise === null) {
     return {
@@ -702,23 +779,33 @@ async function registerWithoutPayment(input) {
     };
   }
 
-  if (amountInPaise > 0) {
+  if (amountInPaise > 0 && !isFailedAttempt) {
     return {
       status: 400,
       body: { message: 'Payment is required before internship application submission' },
     };
   }
 
-  return registerInternshipInternal(
-    input,
-    {
+  const paymentInfo = isFailedAttempt
+    ? {
+      payment_amount: amountInPaise / 100,
+      payment_currency: PAYMENT_CURRENCY,
+      razorpay_order_id: toNullableText(input?.razorpay_order_id),
+      razorpay_payment_id: toNullableText(input?.razorpay_payment_id),
+      payment_status: paymentStatus || 'failed',
+    }
+    : {
       payment_amount: 0,
       payment_currency: PAYMENT_CURRENCY,
       razorpay_order_id: null,
       razorpay_payment_id: null,
       payment_status: 'not_required',
-    },
-    { requirePhoto: true }
+    };
+
+  return registerInternshipInternal(
+    input,
+    paymentInfo,
+    { requirePhoto: true, createUser: !isFailedAttempt }
   );
 }
 
