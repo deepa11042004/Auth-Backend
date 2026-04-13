@@ -13,6 +13,7 @@ const summerSchoolRoutes = require('./routes/summerSchoolRoutes');
 const institutionalRegistrationRoutes = require('./routes/institutionalRegistrationRoutes');
 const contactQueryRoutes = require('./routes/contactQueryRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
+const userDashboardRoutes = require('./routes/userDashboardRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
 
@@ -43,6 +44,7 @@ app.use('/api', summerSchoolRoutes);
 app.use('/api', institutionalRegistrationRoutes);
 app.use('/api', contactQueryRoutes);
 app.use('/api', ticketRoutes);
+app.use('/api/user-dashboard', userDashboardRoutes);
 
 app.use(errorHandler);
 
