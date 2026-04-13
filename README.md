@@ -1838,3 +1838,4 @@ Server error:
   - /auth
   - /api
 - Health endpoint text response is: API is running
+
