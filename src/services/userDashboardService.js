@@ -274,6 +274,53 @@ function mapWorkshopSummaryRow(row) {
   };
 }
 
+function buildWorkshopRowsQuery(options = {}) {
+  const includePaymentColumns = options.includePaymentColumns !== false;
+  const includeAlternativeEmail = options.includeAlternativeEmail !== false;
+
+  const paymentColumns = includePaymentColumns
+    ? `
+        wr.payment_status,
+        wr.payment_amount,
+        wr.payment_currency,`
+    : '';
+
+  const registrationEmailCondition = includeAlternativeEmail
+    ? `
+         LOWER(TRIM(email)) = ?
+         OR LOWER(TRIM(COALESCE(alternative_email, ''))) = ?`
+    : 'LOWER(TRIM(email)) = ?';
+
+  return `SELECT
+        wr.id AS registration_id,
+        wr.workshop_id,${paymentColumns}
+        wr.created_at AS enrolled_at,
+        wl.title AS workshop_title,
+        wl.description AS workshop_description,
+        wl.thumbnail_url,
+        wl.thumbnail,
+        wl.certificate,
+        wl.certificate_url,
+        wl.certificate_file,
+        uwp.progress_percent,
+        uwp.modules_completed,
+        uwp.modules_total,
+        uwp.status AS progress_status,
+        uwp.last_activity_at
+       FROM ${REGISTRATION_TABLE} wr
+       INNER JOIN (
+         SELECT workshop_id, MAX(id) AS latest_id
+         FROM ${REGISTRATION_TABLE}
+         WHERE ${registrationEmailCondition}
+         GROUP BY workshop_id
+       ) latest ON latest.latest_id = wr.id
+       LEFT JOIN ${WORKSHOP_LIST_TABLE} wl ON wl.id = wr.workshop_id
+       LEFT JOIN ${PROGRESS_TABLE} uwp
+         ON uwp.user_id = ?
+        AND uwp.workshop_id = wr.workshop_id
+       ORDER BY wr.id DESC`;
+}
+
 async function fetchUserWorkshopRows(userId, connection = db) {
   const user = await getUserById(userId, connection);
 
@@ -294,77 +341,28 @@ async function fetchUserWorkshopRows(userId, connection = db) {
 
   let rows = [];
 
-  try {
-    [rows] = await connection.query(
-      `SELECT
-        wr.id AS registration_id,
-        wr.workshop_id,
-        wr.payment_status,
-        wr.payment_amount,
-        wr.payment_currency,
-        wr.created_at AS enrolled_at,
-        wl.title AS workshop_title,
-        wl.description AS workshop_description,
-        wl.thumbnail_url,
-        wl.thumbnail,
-        wl.certificate,
-        wl.certificate_url,
-        wl.certificate_file,
-        uwp.progress_percent,
-        uwp.modules_completed,
-        uwp.modules_total,
-        uwp.status AS progress_status,
-        uwp.last_activity_at
-       FROM ${REGISTRATION_TABLE} wr
-       INNER JOIN (
-         SELECT workshop_id, MAX(id) AS latest_id
-         FROM ${REGISTRATION_TABLE}
-         WHERE LOWER(email) = ?
-         GROUP BY workshop_id
-       ) latest ON latest.latest_id = wr.id
-       LEFT JOIN ${WORKSHOP_LIST_TABLE} wl ON wl.id = wr.workshop_id
-       LEFT JOIN ${PROGRESS_TABLE} uwp
-         ON uwp.user_id = ?
-        AND uwp.workshop_id = wr.workshop_id
-       ORDER BY wr.id DESC`,
-      [email, Number(user.id)]
-    );
-  } catch (err) {
-    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
-      throw err;
-    }
+  const queryAttempts = [
+    { includePaymentColumns: true, includeAlternativeEmail: true },
+    { includePaymentColumns: true, includeAlternativeEmail: false },
+    { includePaymentColumns: false, includeAlternativeEmail: true },
+    { includePaymentColumns: false, includeAlternativeEmail: false },
+  ];
 
-    [rows] = await connection.query(
-      `SELECT
-        wr.id AS registration_id,
-        wr.workshop_id,
-        wr.created_at AS enrolled_at,
-        wl.title AS workshop_title,
-        wl.description AS workshop_description,
-        wl.thumbnail_url,
-        wl.thumbnail,
-        wl.certificate,
-        wl.certificate_url,
-        wl.certificate_file,
-        uwp.progress_percent,
-        uwp.modules_completed,
-        uwp.modules_total,
-        uwp.status AS progress_status,
-        uwp.last_activity_at
-       FROM ${REGISTRATION_TABLE} wr
-       INNER JOIN (
-         SELECT workshop_id, MAX(id) AS latest_id
-         FROM ${REGISTRATION_TABLE}
-         WHERE LOWER(email) = ?
-         GROUP BY workshop_id
-       ) latest ON latest.latest_id = wr.id
-       LEFT JOIN ${WORKSHOP_LIST_TABLE} wl ON wl.id = wr.workshop_id
-       LEFT JOIN ${PROGRESS_TABLE} uwp
-         ON uwp.user_id = ?
-        AND uwp.workshop_id = wr.workshop_id
-       ORDER BY wr.id DESC`,
-      [email, Number(user.id)]
-    );
+  for (const attempt of queryAttempts) {
+    const query = buildWorkshopRowsQuery(attempt);
+    const params = attempt.includeAlternativeEmail
+      ? [email, email, Number(user.id)]
+      : [email, Number(user.id)];
+
+    try {
+      const [queryRows] = await connection.query(query, params);
+      rows = queryRows;
+      break;
+    } catch (err) {
+      if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
+        throw err;
+      }
+    }
   }
 
   return {
@@ -491,7 +489,6 @@ async function updateUserProfile(userId, payload = {}) {
   }
 
   const nextFullName = cleanText(payload.full_name) || cleanText(existingUser.full_name);
-  const nextEmail = cleanText(payload.email).toLowerCase() || cleanText(existingUser.email).toLowerCase();
   const nextPhone = toNullableText(payload.phone);
   const nextCity = toNullableText(payload.city);
   const nextInstitution = toNullableText(payload.institution);
@@ -508,42 +505,12 @@ async function updateUserProfile(userId, payload = {}) {
     };
   }
 
-  if (!nextEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) {
-    return {
-      status: 400,
-      body: {
-        success: false,
-        message: 'A valid email is required.',
-      },
-    };
-  }
-
-  const [duplicateRows] = await db.query(
-    `SELECT id
-     FROM ${USERS_TABLE}
-     WHERE LOWER(email) = ?
-       AND id <> ?
-     LIMIT 1`,
-    [nextEmail, resolvedUserId]
-  );
-
-  if (duplicateRows[0]) {
-    return {
-      status: 409,
-      body: {
-        success: false,
-        message: 'This email is already linked to another account.',
-      },
-    };
-  }
-
   await db.query(
     `UPDATE ${USERS_TABLE}
-     SET full_name = ?,
-         email = ?
+     SET full_name = ?
      WHERE id = ?
      LIMIT 1`,
-    [nextFullName, nextEmail, resolvedUserId]
+    [nextFullName, resolvedUserId]
   );
 
   await db.query(
