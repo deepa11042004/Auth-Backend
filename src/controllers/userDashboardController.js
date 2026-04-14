@@ -1,38 +1,58 @@
 const userDashboardService = require('../services/userDashboardService');
 
+function parseAuthUserId(req) {
+  const parsed = Number.parseInt(
+    String(req.user?.userId ?? req.user?.id ?? ''),
+    10
+  );
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
 async function getProfile(req, res) {
-  const response = await userDashboardService.getUserProfile(req.user?.id);
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.getUserProfile(userId);
   return res.status(response.status).json(response.body);
 }
 
 async function updateProfile(req, res) {
-  const response = await userDashboardService.updateUserProfile(req.user?.id, req.body || {});
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.updateUserProfile(userId, req.body || {});
   return res.status(response.status).json(response.body);
 }
 
 async function changePassword(req, res) {
-  const response = await userDashboardService.changeUserPassword(req.user?.id, req.body || {});
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.changeUserPassword(userId, req.body || {});
   return res.status(response.status).json(response.body);
 }
 
 async function getWorkshops(req, res) {
-  const response = await userDashboardService.listEnrolledWorkshops(req.user?.id);
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.listEnrolledWorkshops(userId);
   return res.status(response.status).json(response.body);
 }
 
 async function getCertificates(req, res) {
-  const response = await userDashboardService.getCertificates(req.user?.id);
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.getCertificates(userId);
   return res.status(response.status).json(response.body);
 }
 
 async function getWishlist(req, res) {
-  const response = await userDashboardService.getWishlist(req.user?.id);
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.getWishlist(userId);
   return res.status(response.status).json(response.body);
 }
 
 async function addWishlist(req, res) {
+  const userId = parseAuthUserId(req);
   const response = await userDashboardService.addWishlistItem(
-    req.user?.id,
+    userId,
     req.body?.workshop_id
   );
 
@@ -40,8 +60,9 @@ async function addWishlist(req, res) {
 }
 
 async function removeWishlist(req, res) {
+  const userId = parseAuthUserId(req);
   const response = await userDashboardService.removeWishlistItem(
-    req.user?.id,
+    userId,
     req.params?.workshopId
   );
 
@@ -49,27 +70,32 @@ async function removeWishlist(req, res) {
 }
 
 async function getProgress(req, res) {
-  const response = await userDashboardService.getProgressOverview(req.user?.id);
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.getProgressOverview(userId);
   return res.status(response.status).json(response.body);
 }
 
 async function getAttendance(req, res) {
-  const response = await userDashboardService.getAttendance(req.user?.id);
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.getAttendance(userId);
   return res.status(response.status).json(response.body);
 }
 
 async function getDownloads(req, res) {
-  const response = await userDashboardService.getDownloads(req.user?.id);
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.getDownloads(userId);
   return res.status(response.status).json(response.body);
 }
 
 async function getSettings(req, res) {
-  const response = await userDashboardService.getSettings(req.user?.id);
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.getSettings(userId);
   return res.status(response.status).json(response.body);
 }
 
 async function updateSettings(req, res) {
-  const response = await userDashboardService.updateSettings(req.user?.id, req.body || {});
+  const userId = parseAuthUserId(req);
+  const response = await userDashboardService.updateSettings(userId, req.body || {});
   return res.status(response.status).json(response.body);
 }
 

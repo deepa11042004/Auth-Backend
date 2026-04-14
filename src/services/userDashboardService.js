@@ -127,7 +127,6 @@ async function ensureDashboardTables(connection = db) {
       phone VARCHAR(20) NULL,
       city VARCHAR(120) NULL,
       institution VARCHAR(180) NULL,
-      interests VARCHAR(255) NULL,
       bio TEXT NULL,
       profile_picture_url VARCHAR(500) NULL,
       notification_email TINYINT(1) NOT NULL DEFAULT 1,
@@ -427,7 +426,6 @@ async function getUserProfile(userId) {
       phone,
       city,
       institution,
-      interests,
       bio,
       profile_picture_url,
       notification_email,
@@ -454,7 +452,6 @@ async function getUserProfile(userId) {
         phone: toNullableText(profile?.phone),
         city: toNullableText(profile?.city),
         institution: toNullableText(profile?.institution),
-        interests: toNullableText(profile?.interests),
         bio: toNullableText(profile?.bio),
         profile_picture_url: toNullableText(profile?.profile_picture_url),
         settings: {
@@ -498,7 +495,6 @@ async function updateUserProfile(userId, payload = {}) {
   const nextPhone = toNullableText(payload.phone);
   const nextCity = toNullableText(payload.city);
   const nextInstitution = toNullableText(payload.institution);
-  const nextInterests = toNullableText(payload.interests);
   const nextBio = toNullableText(payload.bio);
   const nextProfilePictureUrl = toNullableText(payload.profile_picture_url);
 
@@ -552,13 +548,12 @@ async function updateUserProfile(userId, payload = {}) {
 
   await db.query(
     `INSERT INTO ${USER_PROFILE_TABLE}
-      (user_id, phone, city, institution, interests, bio, profile_picture_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+      (user_id, phone, city, institution, bio, profile_picture_url)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
       phone = VALUES(phone),
       city = VALUES(city),
       institution = VALUES(institution),
-      interests = VALUES(interests),
       bio = VALUES(bio),
       profile_picture_url = VALUES(profile_picture_url),
       updated_at = CURRENT_TIMESTAMP`,
@@ -567,7 +562,6 @@ async function updateUserProfile(userId, payload = {}) {
       nextPhone,
       nextCity,
       nextInstitution,
-      nextInterests,
       nextBio,
       nextProfilePictureUrl,
     ]
