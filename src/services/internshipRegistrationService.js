@@ -263,26 +263,41 @@ async function hasExistingCompletedInternshipRegistration(email, connection = db
 
 function normalizeRegistrationPayload(input) {
   const payload = {
-    internship_name: cleanText(input.internship_name) || 'Def-Space Summer Internship',
-    internship_designation: cleanText(input.internship_designation) || 'Def-Space Tech Intern',
-    full_name: cleanText(input.full_name),
-    guardian_name: cleanText(input.guardian_name),
+    internship_name:
+      cleanText(input.internship_name || input.internshipName) || 'Def-Space Summer Internship',
+    internship_designation:
+      cleanText(input.internship_designation || input.internshipDesignation)
+      || 'Def-Space Tech Intern',
+    full_name: cleanText(input.full_name || input.fullName),
+    guardian_name: cleanText(input.guardian_name || input.guardianName),
     gender: cleanText(input.gender),
     dob: cleanText(input.dob),
-    mobile_number: cleanText(input.mobile_number || input.contact_number),
+    mobile_number: cleanText(input.mobile_number || input.mobileNumber || input.contact_number),
     email: normalizeEmail(input.email),
-    alternative_email: normalizeEmail(input.alternative_email),
+    alternative_email: normalizeEmail(
+      input.alternative_email || input.alternativeEmail || input.altEmail
+    ),
     address: cleanText(input.address),
     city: cleanText(input.city),
     state: cleanText(input.state),
-    pin_code: cleanText(input.pin_code),
-    institution_name: cleanText(input.institution_name),
-    educational_qualification: cleanText(input.educational_qualification),
+    pin_code: cleanText(input.pin_code || input.pinCode),
+    institution_name: cleanText(input.institution_name || input.institutionName),
+    educational_qualification: cleanText(
+      input.educational_qualification || input.educationalQualification
+    ),
     is_lateral: toBoolean(input.is_lateral ?? input.isLateral ?? input.islateral),
-    declaration_accepted: toBoolean(input.declaration_accepted),
-    passport_photo: Buffer.isBuffer(input.passport_photo) ? input.passport_photo : null,
-    passport_photo_mime_type: toNullableText(input.passport_photo_mime_type),
-    passport_photo_file_name: toNullableText(input.passport_photo_file_name),
+    declaration_accepted: toBoolean(
+      input.declaration_accepted ?? input.declarationAccepted
+    ),
+    passport_photo: Buffer.isBuffer(input.passport_photo)
+      ? input.passport_photo
+      : (Buffer.isBuffer(input.passportPhoto) ? input.passportPhoto : null),
+    passport_photo_mime_type: toNullableText(
+      input.passport_photo_mime_type || input.passportPhotoMimeType
+    ),
+    passport_photo_file_name: toNullableText(
+      input.passport_photo_file_name || input.passportPhotoFileName
+    ),
   };
 
   const errors = [];

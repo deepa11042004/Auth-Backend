@@ -34,10 +34,22 @@ function uploadInternshipPhoto(req, res, next) {
     return next();
   }
 
-  const handler = upload.single('passport_photo');
+  const handler = upload.fields([
+    { name: 'passport_photo', maxCount: 1 },
+    { name: 'passportPhoto', maxCount: 1 },
+  ]);
 
   handler(req, res, (err) => {
     if (!err) {
+      const filesByField = req.files || {};
+      const normalizedPhoto = (filesByField.passport_photo && filesByField.passport_photo[0])
+        || (filesByField.passportPhoto && filesByField.passportPhoto[0])
+        || null;
+
+      if (normalizedPhoto) {
+        req.internshipPhoto = normalizedPhoto;
+      }
+
       return next();
     }
 
@@ -50,7 +62,7 @@ function uploadInternshipPhoto(req, res, next) {
 
       if (err.code === 'LIMIT_UNEXPECTED_FILE') {
         return res.status(400).json({
-          message: 'Unexpected file field. Use passport_photo.',
+          message: 'Unexpected file field. Use passport_photo or passportPhoto.',
         });
       }
 

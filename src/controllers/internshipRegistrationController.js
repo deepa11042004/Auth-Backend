@@ -12,11 +12,12 @@ async function createPaymentOrder(req, res, next) {
 async function verifyPaymentAndRegister(req, res, next) {
   try {
     const payload = { ...(req.body || {}) };
+    const uploadedPhoto = req.internshipPhoto || req.file;
 
-    if (req.file?.buffer) {
-      payload.passport_photo = req.file.buffer;
-      payload.passport_photo_mime_type = req.file.mimetype;
-      payload.passport_photo_file_name = req.file.originalname;
+    if (uploadedPhoto?.buffer) {
+      payload.passport_photo = uploadedPhoto.buffer;
+      payload.passport_photo_mime_type = uploadedPhoto.mimetype;
+      payload.passport_photo_file_name = uploadedPhoto.originalname;
     }
 
     const result = await internshipRegistrationService.verifyPaymentAndRegister(payload);
@@ -29,11 +30,12 @@ async function verifyPaymentAndRegister(req, res, next) {
 async function registerWithoutPayment(req, res, next) {
   try {
     const payload = { ...(req.body || {}) };
+    const uploadedPhoto = req.internshipPhoto || req.file;
 
-    if (req.file?.buffer) {
-      payload.passport_photo = req.file.buffer;
-      payload.passport_photo_mime_type = req.file.mimetype;
-      payload.passport_photo_file_name = req.file.originalname;
+    if (uploadedPhoto?.buffer) {
+      payload.passport_photo = uploadedPhoto.buffer;
+      payload.passport_photo_mime_type = uploadedPhoto.mimetype;
+      payload.passport_photo_file_name = uploadedPhoto.originalname;
     }
 
     const result = await internshipRegistrationService.registerWithoutPayment(payload);
