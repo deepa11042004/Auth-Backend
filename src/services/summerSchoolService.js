@@ -338,6 +338,48 @@ async function fetchPaymentFromRazorpayWithRetry(razorpayClient, paymentId) {
   return { payment: latestPayment, fetchError: lastError };
 }
 
+async function resolvePaymentFromOrderContext(razorpayClient, orderId, paymentId) {
+  const { payment, fetchError } = await fetchPaymentFromRazorpayWithRetry(
+    razorpayClient,
+    paymentId
+  );
+
+  if (payment && String(payment.order_id) === orderId) {
+    return { payment, fetchError: null };
+  }
+
+  let lastError = fetchError;
+
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+    const matchingPayment = items.find((item) => cleanText(item?.id) === paymentId);
+
+    if (matchingPayment) {
+      return { payment: matchingPayment, fetchError: null };
+    }
+  } catch (err) {
+    lastError = err;
+  }
+
+  return { payment, fetchError: lastError };
+}
+
+async function resolveSuccessfulOrderPayment(razorpayClient, orderId) {
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+
+    const successfulPayment = items.find((item) =>
+      SUCCESSFUL_PAYMENT_STATUSES.has(cleanText(item?.status).toLowerCase())
+    );
+
+    return successfulPayment || null;
+  } catch {
+    return null;
+  }
+}
+
 async function registerStudent(payload) {
   await StudentRegistration.ensureStudentRegistrationTable();
 
@@ -417,6 +459,97 @@ async function logPaymentAttempt(payload) {
     };
   }
 
+  const providedOrderId = cleanText(payload?.razorpay_order_id);
+  const providedPaymentId = cleanText(payload?.razorpay_payment_id);
+
+  let upgradedSuccessfulPayment = null;
+
+  if (providedOrderId) {
+    const razorpayClient = getRazorpayClient();
+
+    if (razorpayClient) {
+      let orderBelongsToApplicant = true;
+
+      try {
+        const order = await razorpayClient.orders.fetch(providedOrderId);
+        const orderApplicantEmail = normalizeEmail(order?.notes?.applicant_email);
+
+        if (orderApplicantEmail && orderApplicantEmail !== normalizedPayload.email) {
+          orderBelongsToApplicant = false;
+        }
+      } catch {
+        // Ignore order fetch errors for failed-attempt persistence fallback.
+      }
+
+      if (orderBelongsToApplicant) {
+        if (providedPaymentId) {
+          try {
+            const resolved = await resolvePaymentFromOrderContext(
+              razorpayClient,
+              providedOrderId,
+              providedPaymentId
+            );
+
+            const resolvedStatus = cleanText(resolved.payment?.status).toLowerCase();
+            if (
+              resolved.payment
+              && String(resolved.payment.order_id) === providedOrderId
+              && SUCCESSFUL_PAYMENT_STATUSES.has(resolvedStatus)
+            ) {
+              upgradedSuccessfulPayment = resolved.payment;
+            }
+          } catch {
+            // Ignore reconciliation fetch errors and keep failed-attempt fallback.
+          }
+        }
+
+        if (!upgradedSuccessfulPayment) {
+          const resolvedFromOrder = await resolveSuccessfulOrderPayment(
+            razorpayClient,
+            providedOrderId
+          );
+
+          if (
+            resolvedFromOrder
+            && String(resolvedFromOrder.order_id) === providedOrderId
+          ) {
+            upgradedSuccessfulPayment = resolvedFromOrder;
+          }
+        }
+      }
+    }
+  }
+
+  if (upgradedSuccessfulPayment) {
+    const reconciledAmountMinorUnits = Number(upgradedSuccessfulPayment.amount);
+    const reconciledCurrency = cleanText(upgradedSuccessfulPayment.currency).toUpperCase();
+    const reconciledPaymentId = cleanText(upgradedSuccessfulPayment.id);
+    const reconciledStatus = cleanText(upgradedSuccessfulPayment.status).toLowerCase();
+    const reconciledMethod = cleanText(upgradedSuccessfulPayment.method);
+
+    const reconciledRegistration = await StudentRegistration.createStudentRegistration({
+      ...normalizedPayload,
+      payment_amount:
+        Number.isFinite(reconciledAmountMinorUnits) && reconciledAmountMinorUnits >= 0
+          ? reconciledAmountMinorUnits / 100
+          : null,
+      payment_currency: reconciledCurrency || null,
+      razorpay_order_id: providedOrderId,
+      razorpay_payment_id: reconciledPaymentId || providedPaymentId,
+      payment_status: reconciledStatus || 'captured',
+      payment_mode: reconciledMethod || 'gateway_verified',
+    });
+
+    return {
+      status: 201,
+      body: {
+        success: true,
+        message: 'Payment attempt reconciled and student registration stored successfully',
+        data: reconciledRegistration,
+      },
+    };
+  }
+
   const settings = await readSummerSchoolSettings();
   const paymentConfig = resolveSummerSchoolPaymentConfig(
     normalizedPayload.nationality,
@@ -438,8 +571,8 @@ async function logPaymentAttempt(payload) {
     ...normalizedPayload,
     payment_amount: paymentConfig.amount,
     payment_currency: paymentConfig.currency,
-    razorpay_order_id: cleanText(payload?.razorpay_order_id),
-    razorpay_payment_id: cleanText(payload?.razorpay_payment_id),
+    razorpay_order_id: providedOrderId,
+    razorpay_payment_id: providedPaymentId,
     payment_status: paymentStatus,
     payment_mode: cleanText(payload?.payment_mode) || 'gateway_failed',
   });
@@ -593,24 +726,13 @@ async function verifyPaymentAndRegister(payload) {
     };
   }
 
-  const settings = await readSummerSchoolSettings();
-  const paymentConfig = resolveSummerSchoolPaymentConfig(
-    normalizedPayload.nationality,
-    normalizedPayload.category,
-    settings
-  );
-  if (!paymentConfig) {
-    return {
-      status: 400,
-      body: { message: 'Unable to resolve fee for selected nationality and category' },
-    };
-  }
+  const normalizedNationality = normalizeNationality(normalizedPayload.nationality);
+  const expectedCurrency = SUMMER_SCHOOL_PAYMENT_CURRENCIES[normalizedNationality];
 
-  const amountInMinorUnits = toMoneyInMinorUnits(paymentConfig.amount);
-  if (amountInMinorUnits === null || amountInMinorUnits <= 0) {
+  if (!expectedCurrency) {
     return {
       status: 400,
-      body: { message: 'Payment is not required for this registration' },
+      body: { message: 'Unable to resolve payment currency for selected nationality' },
     };
   }
 
@@ -638,8 +760,50 @@ async function verifyPaymentAndRegister(payload) {
     };
   }
 
-  const { payment, fetchError } = await fetchPaymentFromRazorpayWithRetry(
+  let order = null;
+
+  try {
+    order = await razorpayClient.orders.fetch(orderId);
+  } catch (err) {
+    const reason = err instanceof Error ? cleanText(err.message) : '';
+    return {
+      status: 400,
+      body: {
+        message: 'Unable to validate order with Razorpay',
+        ...(reason ? { reason } : {}),
+      },
+    };
+  }
+
+  const orderAmountInMinorUnits = Number(order?.amount);
+  if (!Number.isFinite(orderAmountInMinorUnits) || orderAmountInMinorUnits <= 0) {
+    return {
+      status: 400,
+      body: { message: 'Invalid order amount received from Razorpay' },
+    };
+  }
+
+  const orderCurrency = cleanText(order?.currency).toUpperCase();
+  if (orderCurrency !== expectedCurrency) {
+    return {
+      status: 400,
+      body: {
+        message: `Order currency mismatch. Expected ${expectedCurrency}, received ${orderCurrency || 'unknown'}`,
+      },
+    };
+  }
+
+  const orderApplicantEmail = normalizeEmail(order?.notes?.applicant_email);
+  if (orderApplicantEmail && orderApplicantEmail !== normalizedPayload.email) {
+    return {
+      status: 400,
+      body: { message: 'Order does not belong to the provided email address' },
+    };
+  }
+
+  const { payment, fetchError } = await resolvePaymentFromOrderContext(
     razorpayClient,
+    orderId,
     paymentId
   );
 
@@ -661,7 +825,7 @@ async function verifyPaymentAndRegister(payload) {
     };
   }
 
-  if (Number(payment.amount) !== amountInMinorUnits) {
+  if (Number(payment.amount) !== orderAmountInMinorUnits) {
     return {
       status: 400,
       body: { message: 'Paid amount does not match summer school registration fee' },
@@ -669,11 +833,11 @@ async function verifyPaymentAndRegister(payload) {
   }
 
   const paymentCurrency = cleanText(payment.currency).toUpperCase();
-  if (paymentCurrency !== paymentConfig.currency) {
+  if (paymentCurrency !== orderCurrency) {
     return {
       status: 400,
       body: {
-        message: `Payment currency mismatch. Expected ${paymentConfig.currency}, received ${paymentCurrency || 'unknown'}`,
+        message: `Payment currency mismatch. Expected ${orderCurrency}, received ${paymentCurrency || 'unknown'}`,
       },
     };
   }
