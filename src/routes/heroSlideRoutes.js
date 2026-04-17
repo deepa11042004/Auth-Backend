@@ -22,6 +22,7 @@ const router = express.Router();
  */
 router.post('/admin/hero-slides', authAdmin, uploadHeroSlideMedia, heroSlideController.createAdminHeroSlide);
 router.get('/admin/hero-slides', authAdmin, heroSlideController.getAdminHeroSlides);
+router.put('/admin/hero-slides/:id', authAdmin, uploadHeroSlideMedia, heroSlideController.updateAdminHeroSlide);
 router.delete('/admin/hero-slides/:id', authAdmin, heroSlideController.deleteAdminHeroSlide);
 
 router.get('/hero-slides', heroSlideController.getPublicHeroSlides);

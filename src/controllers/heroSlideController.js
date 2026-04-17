@@ -9,6 +9,19 @@ async function createAdminHeroSlide(req, res, next) {
   }
 }
 
+async function updateAdminHeroSlide(req, res, next) {
+  try {
+    const result = await heroSlideService.updateAdminHeroSlide(
+      req.params.id,
+      req.body || {},
+      req.file || null
+    );
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function getPublicHeroSlides(req, res, next) {
   try {
     const result = await heroSlideService.listPublicHeroSlides();
@@ -58,6 +71,7 @@ async function deleteAdminHeroSlide(req, res, next) {
 
 module.exports = {
   createAdminHeroSlide,
+  updateAdminHeroSlide,
   getPublicHeroSlides,
   getAdminHeroSlides,
   getHeroSlideMedia,

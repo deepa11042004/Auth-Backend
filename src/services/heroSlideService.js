@@ -48,6 +48,81 @@ async function createAdminHeroSlide(payload, file) {
   };
 }
 
+async function updateAdminHeroSlide(rawId, payload, file) {
+  await HeroSlide.ensureHeroSlidesTable();
+
+  const id = parseHeroSlideId(rawId);
+
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid hero slide id',
+      },
+    };
+  }
+
+  const existingSlide = await HeroSlide.getHeroSlideById(id);
+
+  if (!existingSlide) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Hero slide not found',
+      },
+    };
+  }
+
+  const { updates, errors } = HeroSlide.normalizeHeroSlideUpdatePayload(payload || {}, {
+    file: file || null,
+    existingSlide,
+  });
+
+  if (errors.length > 0) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: errors.join('. '),
+        errors,
+      },
+    };
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'No changes were provided for hero slide update.',
+      },
+    };
+  }
+
+  const updatedSlide = await HeroSlide.updateHeroSlideById(id, updates);
+
+  if (!updatedSlide) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Hero slide not found',
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Hero slide updated successfully',
+      data: attachMediaUrl(updatedSlide),
+    },
+  };
+}
+
 async function listPublicHeroSlides() {
   await HeroSlide.ensureHeroSlidesTable();
 
@@ -176,6 +251,7 @@ async function deleteAdminHeroSlide(rawId) {
 
 module.exports = {
   createAdminHeroSlide,
+  updateAdminHeroSlide,
   listPublicHeroSlides,
   listAdminHeroSlides,
   fetchHeroSlideMedia,
