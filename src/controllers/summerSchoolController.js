@@ -18,6 +18,15 @@ async function verifyPaymentAndRegister(req, res, next) {
   }
 }
 
+async function logPaymentAttempt(req, res, next) {
+  try {
+    const result = await summerSchoolService.logPaymentAttempt(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function createStudentRegistration(req, res, next) {
   try {
     const result = await summerSchoolService.registerStudent(req.body || {});
@@ -57,6 +66,7 @@ async function updateSummerSchoolRegistrationSettings(req, res, next) {
 module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
+  logPaymentAttempt,
   createStudentRegistration,
   getStudentRegistrations,
   getSummerSchoolRegistrationSettings,

@@ -25,6 +25,11 @@ router.post(
 );
 
 router.post(
+  '/summer-school/student-registration/log-payment-attempt',
+  summerSchoolController.logPaymentAttempt
+);
+
+router.post(
   '/summer-school/student-registration',
   summerSchoolController.createStudentRegistration
 );

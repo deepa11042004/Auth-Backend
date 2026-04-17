@@ -2,6 +2,7 @@ const db = require('../config/db');
 
 const STUDENT_REGISTRATION_TABLE = 'summer_school_student_registrations';
 const NATIONALITY_OPTIONS = Object.freeze(['Indian', 'Other']);
+const CATEGORY_OPTIONS = Object.freeze(['General Category', 'EWS(Economily weaker section)']);
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -36,6 +37,11 @@ const studentRegistrationSchema = Object.freeze({
   full_name: { type: String, required: true },
   dob: { type: String, required: true },
   email: { type: String, required: true },
+  category: {
+    type: String,
+    enum: CATEGORY_OPTIONS,
+    required: true,
+  },
   alternative_email: { type: String, required: true },
   grade: { type: String, required: true },
   school: { type: String, required: true },
@@ -72,6 +78,28 @@ function toNullableText(value) {
 
 function normalizeEmail(value) {
   return cleanText(value).toLowerCase();
+}
+
+function normalizeCategory(value) {
+  const cleaned = cleanText(value);
+  const normalized = cleaned.toLowerCase();
+
+  if (
+    normalized === 'genral'
+    || normalized === 'general'
+    || normalized === 'general category'
+  ) {
+    return 'General Category';
+  }
+
+  if (
+    normalized === 'ews(economily weaker section)'
+    || normalized === 'ews (economily weaker section)'
+  ) {
+    return 'EWS(Economily weaker section)';
+  }
+
+  return cleaned;
 }
 
 function toNullableUpperText(value) {
@@ -138,6 +166,7 @@ function normalizeStudentRegistrationPayload(input = {}) {
     full_name: cleanText(input.full_name || input.fullName),
     dob: cleanText(input.dob),
     email: normalizeEmail(input.email),
+    category: normalizeCategory(input.category),
     alternative_email: normalizeEmail(
       input.alternative_email || input.alternativeEmail || input.altEmail
     ),
@@ -171,6 +200,12 @@ function normalizeStudentRegistrationPayload(input = {}) {
     errors.push('email is required');
   } else if (!EMAIL_REGEX.test(payload.email)) {
     errors.push('Invalid email format');
+  }
+
+  if (!payload.category) {
+    errors.push('category is required');
+  } else if (!CATEGORY_OPTIONS.includes(payload.category)) {
+    errors.push(`category must be one of: ${CATEGORY_OPTIONS.join(', ')}`);
   }
 
   if (!payload.alternative_email) {
@@ -237,6 +272,7 @@ async function ensureStudentRegistrationTable(connection = db) {
       full_name VARCHAR(255) NOT NULL,
       dob DATE NOT NULL,
       email VARCHAR(255) NOT NULL,
+      category VARCHAR(80) NOT NULL,
       alternative_email VARCHAR(255) NULL,
       grade VARCHAR(80) NOT NULL,
       school VARCHAR(255) NOT NULL,
@@ -289,6 +325,26 @@ async function ensureStudentRegistrationTable(connection = db) {
     );
   }
 
+  const [categoryColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${STUDENT_REGISTRATION_TABLE} LIKE 'category'`
+  );
+
+  if (categoryColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${STUDENT_REGISTRATION_TABLE}
+       ADD COLUMN category VARCHAR(80) NOT NULL DEFAULT 'General Category' AFTER email`
+    );
+  } else {
+    const existingDefault = cleanText(categoryColumn[0]?.Default);
+
+    if (existingDefault !== 'General Category') {
+      await connection.query(
+        `ALTER TABLE ${STUDENT_REGISTRATION_TABLE}
+         MODIFY COLUMN category VARCHAR(80) NOT NULL DEFAULT 'General Category'`
+      );
+    }
+  }
+
   for (const paymentColumn of PAYMENT_COLUMNS) {
     const [column] = await connection.query(
       `SHOW COLUMNS FROM ${STUDENT_REGISTRATION_TABLE} LIKE ?`,
@@ -315,6 +371,7 @@ function mapStudentRegistrationRow(row) {
     full_name: cleanText(row.full_name),
     dob: formatDate(row.dob),
     email: cleanText(row.email),
+    category: normalizeCategory(row.category),
     alternative_email: cleanText(row.alternative_email),
     grade: cleanText(row.grade),
     school: cleanText(row.school),
@@ -359,6 +416,7 @@ async function createStudentRegistration(payload, connection = db) {
     'full_name',
     'dob',
     'email',
+    'category',
     'alternative_email',
     'grade',
     'school',
@@ -380,6 +438,7 @@ async function createStudentRegistration(payload, connection = db) {
     payload.full_name,
     payload.dob,
     payload.email,
+    payload.category,
     payload.alternative_email,
     payload.grade,
     payload.school,
@@ -466,6 +525,10 @@ async function isStudentEmailTaken(email, connection = db) {
     `SELECT id
      FROM ${STUDENT_REGISTRATION_TABLE}
      WHERE LOWER(email) = LOWER(?)
+       AND (
+         payment_status IS NULL
+         OR LOWER(payment_status) IN ('captured', 'authorized', 'not_required')
+       )
      LIMIT 1`,
     [normalizedEmail]
   );
@@ -486,6 +549,7 @@ async function getStudentRegistrations(connection = db) {
 module.exports = {
   STUDENT_REGISTRATION_TABLE,
   NATIONALITY_OPTIONS,
+  CATEGORY_OPTIONS,
   studentRegistrationSchema,
   normalizeStudentRegistrationPayload,
   ensureStudentRegistrationTable,
