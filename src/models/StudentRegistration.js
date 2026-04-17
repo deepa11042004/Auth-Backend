@@ -2,7 +2,9 @@ const db = require('../config/db');
 
 const STUDENT_REGISTRATION_TABLE = 'summer_school_student_registrations';
 const NATIONALITY_OPTIONS = Object.freeze(['Indian', 'Other']);
-const CATEGORY_OPTIONS = Object.freeze(['General Category', 'EWS(Economily weaker section)']);
+const EWS_CATEGORY = 'EWS(Economically weaker section)';
+const LEGACY_EWS_CATEGORY = 'EWS(Economily weaker section)';
+const CATEGORY_OPTIONS = Object.freeze(['General Category', EWS_CATEGORY]);
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -93,10 +95,12 @@ function normalizeCategory(value) {
   }
 
   if (
-    normalized === 'ews(economily weaker section)'
+    normalized === EWS_CATEGORY.toLowerCase()
+    || normalized === 'ews (economically weaker section)'
+    || normalized === LEGACY_EWS_CATEGORY.toLowerCase()
     || normalized === 'ews (economily weaker section)'
   ) {
-    return 'EWS(Economily weaker section)';
+    return EWS_CATEGORY;
   }
 
   return cleaned;

@@ -13,7 +13,8 @@ const DEFAULT_BATCH_OPTIONS = Object.freeze([
   'Batch 2: 19th June - 30th July',
 ]);
 const GENERAL_CATEGORY = 'General Category';
-const EWS_CATEGORY = 'EWS(Economily weaker section)';
+const EWS_CATEGORY = 'EWS(Economically weaker section)';
+const LEGACY_EWS_CATEGORY = 'EWS(Economily weaker section)';
 const CATEGORY_OPTIONS = Object.freeze([GENERAL_CATEGORY, EWS_CATEGORY]);
 const PAYMENT_STATUS_FAILED = 'failed';
 const SUMMER_SCHOOL_PAYMENT_CURRENCIES = Object.freeze({
@@ -68,7 +69,12 @@ function normalizeCategory(value) {
     return GENERAL_CATEGORY;
   }
 
-  if (normalized === 'ews(economily weaker section)' || normalized === 'ews (economily weaker section)') {
+  if (
+    normalized === EWS_CATEGORY.toLowerCase()
+    || normalized === 'ews (economically weaker section)'
+    || normalized === LEGACY_EWS_CATEGORY.toLowerCase()
+    || normalized === 'ews (economily weaker section)'
+  ) {
     return EWS_CATEGORY;
   }
 

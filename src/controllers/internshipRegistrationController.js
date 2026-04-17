@@ -72,6 +72,27 @@ async function updateInternshipFeeSettings(req, res, next) {
   }
 }
 
+async function deleteInternshipRegistration(req, res, next) {
+  try {
+    const result = await internshipRegistrationService.deleteInternshipRegistration(req.params.id);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function transferInternshipRegistrationPaymentStatus(req, res, next) {
+  try {
+    const result = await internshipRegistrationService.transferInternshipRegistrationPaymentStatus(
+      req.params.id,
+      req.body || {}
+    );
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
@@ -79,4 +100,6 @@ module.exports = {
   getInternshipRegistrations,
   getInternshipFeeSettings,
   updateInternshipFeeSettings,
+  deleteInternshipRegistration,
+  transferInternshipRegistrationPaymentStatus,
 };

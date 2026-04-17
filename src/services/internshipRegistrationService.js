@@ -833,6 +833,25 @@ function toNumberOrNull(value) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function parseInternshipRegistrationId(rawId) {
+  const parsed = Number.parseInt(String(rawId || ''), 10);
+
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function normalizeTransferPaymentStatus(value) {
+  const normalized = normalizePaymentStatus(value);
+  if (normalized === 'failed' || normalized === 'captured') {
+    return normalized;
+  }
+
+  return null;
+}
+
 function mapInternshipApplicationRow(row) {
   return {
     ...row,
@@ -841,6 +860,50 @@ function mapInternshipApplicationRow(row) {
     has_passport_photo: toBoolean(row.has_passport_photo),
     payment_amount: toNumberOrNull(row.payment_amount),
   };
+}
+
+async function getInternshipApplicationById(id, connection = db) {
+  const [rows] = await connection.query(
+    `SELECT
+      id,
+      internship_name,
+      internship_designation,
+      full_name,
+      guardian_name,
+      gender,
+      DATE_FORMAT(dob, '%Y-%m-%d') AS dob,
+      mobile_number,
+      email,
+      alternative_email,
+      address,
+      city,
+      state,
+      pin_code,
+      institution_name,
+      educational_qualification,
+      is_lateral,
+      declaration_accepted,
+      CASE WHEN passport_photo IS NULL THEN 0 ELSE 1 END AS has_passport_photo,
+      passport_photo_mime_type,
+      passport_photo_file_name,
+      payment_amount,
+      payment_currency,
+      razorpay_order_id,
+      razorpay_payment_id,
+      payment_status,
+      DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
+      DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
+     FROM ${INTERNSHIP_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [id]
+  );
+
+  if (!rows[0]) {
+    return null;
+  }
+
+  return mapInternshipApplicationRow(rows[0]);
 }
 
 async function getInternshipRegistrations() {
@@ -895,6 +958,135 @@ async function getInternshipFeeSettings() {
   };
 }
 
+async function deleteInternshipRegistration(rawId) {
+  const registrationId = parseInternshipRegistrationId(rawId);
+
+  if (!registrationId) {
+    return {
+      status: 400,
+      body: { message: 'Invalid internship registration id' },
+    };
+  }
+
+  const existingApplication = await getInternshipApplicationById(registrationId);
+
+  if (!existingApplication) {
+    return {
+      status: 404,
+      body: { message: 'Internship registration not found' },
+    };
+  }
+
+  await db.query(
+    `DELETE FROM ${INTERNSHIP_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [registrationId]
+  );
+
+  return {
+    status: 200,
+    body: {
+      message: 'Internship registration deleted successfully',
+      application: existingApplication,
+    },
+  };
+}
+
+async function transferInternshipRegistrationPaymentStatus(rawId, input = {}) {
+  const registrationId = parseInternshipRegistrationId(rawId);
+  const targetPaymentStatus = normalizeTransferPaymentStatus(
+    input.payment_status || input.paymentStatus || input.status
+  );
+
+  if (!registrationId) {
+    return {
+      status: 400,
+      body: { message: 'Invalid internship registration id' },
+    };
+  }
+
+  if (!targetPaymentStatus) {
+    return {
+      status: 400,
+      body: {
+        message: 'payment_status must be either failed or captured',
+      },
+    };
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const existingApplication = await getInternshipApplicationById(registrationId, connection);
+
+    if (!existingApplication) {
+      await connection.rollback();
+      return {
+        status: 404,
+        body: { message: 'Internship registration not found' },
+      };
+    }
+
+    const existingPaymentStatus = normalizePaymentStatus(existingApplication.payment_status);
+
+    if (existingPaymentStatus === targetPaymentStatus) {
+      await connection.rollback();
+      return {
+        status: 200,
+        body: {
+          message: `Payment status is already ${targetPaymentStatus}`,
+          application: existingApplication,
+        },
+      };
+    }
+
+    await connection.query(
+      `UPDATE ${INTERNSHIP_TABLE}
+       SET payment_status = ?
+       WHERE id = ?
+       LIMIT 1`,
+      [targetPaymentStatus, registrationId]
+    );
+
+    const updatedApplication = await getInternshipApplicationById(registrationId, connection);
+
+    if (!updatedApplication) {
+      await connection.rollback();
+      return {
+        status: 500,
+        body: { message: 'Unable to read updated internship registration' },
+      };
+    }
+
+    if (targetPaymentStatus === 'captured') {
+      await createUserIfMissing(
+        connection,
+        updatedApplication.email,
+        updatedApplication.full_name,
+        updatedApplication.mobile_number
+      );
+    }
+
+    await connection.commit();
+
+    return {
+      status: 200,
+      body: {
+        message: `Internship registration payment status updated to ${targetPaymentStatus}`,
+        application: updatedApplication,
+      },
+    };
+  } catch (err) {
+    await connection.rollback();
+    throw err;
+  } finally {
+    connection.release();
+  }
+}
+
 async function updateInternshipFeeSettings(input) {
   const generalFee = parseFeeRupeesInput(
     input?.general_fee_rupees ?? input?.generalFeeRupees ?? input?.general_fee
@@ -938,4 +1130,6 @@ module.exports = {
   getInternshipRegistrations,
   getInternshipFeeSettings,
   updateInternshipFeeSettings,
+  deleteInternshipRegistration,
+  transferInternshipRegistrationPaymentStatus,
 };

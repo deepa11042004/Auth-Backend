@@ -75,4 +75,28 @@ router.put(
   internshipRegistrationController.updateInternshipFeeSettings
 );
 
+/**
+ * @openapi
+ * /api/internship/registration/{id}:
+ *   delete:
+ *     tags: [Internships]
+ *     summary: Delete an internship registration entry by id
+ */
+router.delete(
+  '/internship/registration/:id',
+  internshipRegistrationController.deleteInternshipRegistration
+);
+
+/**
+ * @openapi
+ * /api/internship/registration/{id}/payment-status:
+ *   patch:
+ *     tags: [Internships]
+ *     summary: Transfer internship registration payment status to failed or captured
+ */
+router.patch(
+  '/internship/registration/:id/payment-status',
+  internshipRegistrationController.transferInternshipRegistrationPaymentStatus
+);
+
 module.exports = router;
