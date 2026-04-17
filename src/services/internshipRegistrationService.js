@@ -245,6 +245,50 @@ async function fetchPaymentFromRazorpayWithRetry(razorpayClient, paymentId) {
   return { payment: latestPayment, fetchError: lastError };
 }
 
+async function resolvePaymentFromOrderContext(razorpayClient, orderId, paymentId) {
+  const { payment, fetchError } = await fetchPaymentFromRazorpayWithRetry(
+    razorpayClient,
+    paymentId
+  );
+
+  if (payment && String(payment.order_id) === orderId) {
+    return { payment, fetchError: null };
+  }
+
+  let lastError = fetchError;
+
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+    const matchingPayment = items.find(
+      (item) => cleanText(item?.id) === paymentId
+    );
+
+    if (matchingPayment) {
+      return { payment: matchingPayment, fetchError: null };
+    }
+  } catch (err) {
+    lastError = err;
+  }
+
+  return { payment, fetchError: lastError };
+}
+
+async function resolveSuccessfulOrderPayment(razorpayClient, orderId) {
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+
+    const successfulPayment = items.find((item) =>
+      SUCCESSFUL_PAYMENT_STATUSES.has(cleanText(item?.status).toLowerCase())
+    );
+
+    return successfulPayment || null;
+  } catch {
+    return null;
+  }
+}
+
 async function hasExistingCompletedInternshipRegistration(email, connection = db) {
   const [rows] = await connection.query(
     `SELECT id
@@ -663,18 +707,6 @@ async function verifyPaymentAndRegister(input) {
     };
   }
 
-  const isLateral = toBoolean(input?.is_lateral ?? input?.isLateral ?? input?.islateral);
-  const feeSettings = await readInternshipFeeSettings();
-  const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral);
-  const amountInPaise = toMoneyInPaise(internshipFeeRupees);
-
-  if (amountInPaise === null || amountInPaise <= 0) {
-    return {
-      status: 400,
-      body: { message: 'Payment is not required for internship application' },
-    };
-  }
-
   const { keySecret } = getRazorpayCredentials();
   const razorpayClient = getRazorpayClient();
 
@@ -701,8 +733,43 @@ async function verifyPaymentAndRegister(input) {
     };
   }
 
-  const { payment, fetchError } = await fetchPaymentFromRazorpayWithRetry(
+  let order = null;
+
+  try {
+    order = await razorpayClient.orders.fetch(orderId);
+  } catch (err) {
+    const reason = err instanceof Error ? cleanText(err.message) : '';
+    return {
+      status: 400,
+      body: {
+        message: 'Unable to validate order with Razorpay',
+        ...(reason ? { reason } : {}),
+      },
+    };
+  }
+
+  const orderAmountInPaise = Number(order?.amount);
+  if (!Number.isFinite(orderAmountInPaise) || orderAmountInPaise <= 0) {
+    return {
+      status: 400,
+      body: { message: 'Invalid order amount received from Razorpay' },
+    };
+  }
+
+  const orderCurrency = cleanText(order?.currency).toUpperCase() || PAYMENT_CURRENCY;
+
+  if (orderCurrency !== PAYMENT_CURRENCY) {
+    return {
+      status: 400,
+      body: {
+        message: `Order currency mismatch. Expected ${PAYMENT_CURRENCY}, received ${orderCurrency || 'unknown'}`,
+      },
+    };
+  }
+
+  const { payment, fetchError } = await resolvePaymentFromOrderContext(
     razorpayClient,
+    orderId,
     paymentId
   );
 
@@ -724,10 +791,20 @@ async function verifyPaymentAndRegister(input) {
     };
   }
 
-  if (Number(payment.amount) !== amountInPaise) {
+  if (Number(payment.amount) !== orderAmountInPaise) {
     return {
       status: 400,
       body: { message: 'Paid amount does not match internship application fee' },
+    };
+  }
+
+  const paymentCurrency = cleanText(payment.currency).toUpperCase() || orderCurrency;
+  if (paymentCurrency !== orderCurrency) {
+    return {
+      status: 400,
+      body: {
+        message: `Payment currency mismatch. Expected ${orderCurrency}, received ${paymentCurrency || 'unknown'}`,
+      },
     };
   }
 
@@ -744,8 +821,8 @@ async function verifyPaymentAndRegister(input) {
   const registrationResult = await registerInternshipInternal(
     input,
     {
-      payment_amount: amountInPaise / 100,
-      payment_currency: PAYMENT_CURRENCY,
+      payment_amount: orderAmountInPaise / 100,
+      payment_currency: paymentCurrency,
       razorpay_order_id: orderId,
       razorpay_payment_id: paymentId,
       payment_status: cleanText(payment.status) || 'captured',
@@ -786,6 +863,7 @@ async function registerWithoutPayment(input) {
   const amountInPaise = toMoneyInPaise(internshipFeeRupees);
   const paymentStatus = normalizePaymentStatus(input?.payment_status);
   const isFailedAttempt = isFailedPaymentStatus(paymentStatus);
+  let effectiveFailedAttempt = isFailedAttempt;
 
   if (amountInPaise === null) {
     return {
@@ -801,26 +879,94 @@ async function registerWithoutPayment(input) {
     };
   }
 
-  const paymentInfo = isFailedAttempt
-    ? {
-      payment_amount: amountInPaise / 100,
-      payment_currency: PAYMENT_CURRENCY,
-      razorpay_order_id: toNullableText(input?.razorpay_order_id),
-      razorpay_payment_id: toNullableText(input?.razorpay_payment_id),
-      payment_status: paymentStatus || 'failed',
+  const providedOrderId = toNullableText(input?.razorpay_order_id);
+  const providedPaymentId = toNullableText(input?.razorpay_payment_id);
+
+  let paymentInfo = {
+    payment_amount: 0,
+    payment_currency: PAYMENT_CURRENCY,
+    razorpay_order_id: null,
+    razorpay_payment_id: null,
+    payment_status: 'not_required',
+  };
+
+  if (isFailedAttempt) {
+    let upgradedSuccessfulPayment = null;
+
+    if (providedOrderId) {
+      const razorpayClient = getRazorpayClient();
+
+      if (razorpayClient) {
+        try {
+          if (providedPaymentId) {
+            const resolved = await resolvePaymentFromOrderContext(
+              razorpayClient,
+              providedOrderId,
+              providedPaymentId
+            );
+
+            const resolvedStatus = cleanText(resolved.payment?.status).toLowerCase();
+            if (
+              resolved.payment
+              && String(resolved.payment.order_id) === providedOrderId
+              && SUCCESSFUL_PAYMENT_STATUSES.has(resolvedStatus)
+            ) {
+              upgradedSuccessfulPayment = resolved.payment;
+            }
+          }
+
+          if (!upgradedSuccessfulPayment) {
+            const resolvedFromOrder = await resolveSuccessfulOrderPayment(
+              razorpayClient,
+              providedOrderId
+            );
+
+            if (
+              resolvedFromOrder
+              && String(resolvedFromOrder.order_id) === providedOrderId
+            ) {
+              upgradedSuccessfulPayment = resolvedFromOrder;
+            }
+          }
+        } catch {
+          // Keep fallback failed-attempt behavior when Razorpay lookup fails.
+        }
+      }
     }
-    : {
-      payment_amount: 0,
-      payment_currency: PAYMENT_CURRENCY,
-      razorpay_order_id: null,
-      razorpay_payment_id: null,
-      payment_status: 'not_required',
-    };
+
+    if (upgradedSuccessfulPayment) {
+      effectiveFailedAttempt = false;
+
+      const upgradedAmountInPaise = Number(upgradedSuccessfulPayment.amount);
+      const upgradedCurrency = cleanText(upgradedSuccessfulPayment.currency).toUpperCase();
+      const upgradedPaymentId = cleanText(upgradedSuccessfulPayment.id);
+      const upgradedStatus = cleanText(upgradedSuccessfulPayment.status).toLowerCase();
+
+      paymentInfo = {
+        payment_amount:
+          Number.isFinite(upgradedAmountInPaise) && upgradedAmountInPaise >= 0
+            ? upgradedAmountInPaise / 100
+            : amountInPaise / 100,
+        payment_currency: upgradedCurrency || PAYMENT_CURRENCY,
+        razorpay_order_id: providedOrderId,
+        razorpay_payment_id: upgradedPaymentId || providedPaymentId,
+        payment_status: upgradedStatus || 'captured',
+      };
+    } else {
+      paymentInfo = {
+        payment_amount: amountInPaise / 100,
+        payment_currency: PAYMENT_CURRENCY,
+        razorpay_order_id: providedOrderId,
+        razorpay_payment_id: providedPaymentId,
+        payment_status: paymentStatus || 'failed',
+      };
+    }
+  }
 
   return registerInternshipInternal(
     input,
     paymentInfo,
-    { requirePhoto: true, createUser: !isFailedAttempt }
+    { requirePhoto: true, createUser: !effectiveFailedAttempt }
   );
 }
 
