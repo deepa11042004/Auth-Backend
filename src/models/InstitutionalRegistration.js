@@ -2,7 +2,6 @@ const db = require('../config/db');
 
 const INSTITUTIONAL_REGISTRATION_TABLE = 'institutional_registrations';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^[+]?[0-9\s-]{10,15}$/;
 const PIN_CODE_REGEX = /^[0-9A-Za-z\s-]{4,12}$/;
 
 function cleanText(value) {
@@ -89,8 +88,6 @@ function normalizeInstitutionalRegistrationPayload(input = {}) {
 
   if (!payload.phone) {
     errors.push('phone is required');
-  } else if (!PHONE_REGEX.test(payload.phone)) {
-    errors.push('Invalid phone format');
   }
 
   if (!payload.student_count) {
@@ -105,10 +102,6 @@ function normalizeInstitutionalRegistrationPayload(input = {}) {
     errors.push('head_email is required');
   } else if (!EMAIL_REGEX.test(payload.head_email)) {
     errors.push('Invalid head_email format');
-  }
-
-  if (payload.head_phone && !PHONE_REGEX.test(payload.head_phone)) {
-    errors.push('Invalid head_phone format');
   }
 
   if (payload.pin_code && !PIN_CODE_REGEX.test(payload.pin_code)) {

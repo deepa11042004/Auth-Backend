@@ -742,8 +742,7 @@ async function verifyPaymentAndRegister(input) {
 async function registerForWorkshop(input) {
   const fullName = cleanText(input.full_name);
   const email = normalizeEmail(input.email);
-  const contactNumberRaw = cleanText(input.contact_number);
-  const contactNumber = contactNumberRaw.replace(/\D/g, '');
+  const contactNumber = cleanText(input.contact_number);
   const alternativeEmail = normalizeEmail(input.alternative_email);
   const institution = cleanText(input.institution);
   const designation = normalizeDesignation(input.designation);
@@ -781,13 +780,6 @@ async function registerForWorkshop(input) {
         message:
           'full_name, email, contact_number, alternative_email, institution, designation and nationality are required',
       },
-    };
-  }
-
-  if (!/^[0-9]{10}$/.test(contactNumber)) {
-    return {
-      status: 400,
-      body: { message: 'contact_number must be exactly 10 digits' },
     };
   }
 

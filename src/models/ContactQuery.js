@@ -2,7 +2,6 @@ const db = require('../config/db');
 
 const CONTACT_QUERY_TABLE = 'contact_queries';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^[+]?[0-9\s-]{10,15}$/;
 
 function cleanText(value) {
   if (Array.isArray(value)) {
@@ -60,10 +59,6 @@ function normalizeContactQueryPayload(input = {}) {
     errors.push('email is required');
   } else if (!EMAIL_REGEX.test(payload.email)) {
     errors.push('Invalid email format');
-  }
-
-  if (payload.phone && !PHONE_REGEX.test(payload.phone)) {
-    errors.push('Invalid phone format');
   }
 
   if (!payload.subject) {

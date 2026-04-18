@@ -2,7 +2,6 @@ const db = require('../config/db');
 
 const MOU_REQUEST_TABLE = 'mou_requests';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^[+]?[0-9\s\-()]{10,20}$/;
 
 function cleanText(value) {
   if (Array.isArray(value)) {
@@ -97,8 +96,6 @@ function normalizeMouRequestPayload(input = {}, options = {}) {
 
   if (!payload.official_phone) {
     errors.push('official_phone is required');
-  } else if (!PHONE_REGEX.test(payload.official_phone)) {
-    errors.push('Invalid official_phone format');
   }
 
   if (!payload.proposal_purpose) {
