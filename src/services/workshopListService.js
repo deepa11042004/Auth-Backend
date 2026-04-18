@@ -780,6 +780,7 @@ async function getWorkshopParticipants(workshopId) {
       payment_amount,
       razorpay_payment_id,
       payment_status,
+      created_at,
       agree_recording,
       agree_terms
      FROM ${REGISTRATION_TABLE}
@@ -802,6 +803,7 @@ async function getWorkshopParticipants(workshopId) {
       payment_amount: Number.isFinite(paymentAmount) ? paymentAmount : null,
       razorpay_payment_id: cleanText(row.razorpay_payment_id) || null,
       payment_status: cleanText(row.payment_status) || null,
+      created_at: formatDateTime(row.created_at),
       agree_recording: Number(row.agree_recording || 0) === 1,
       agree_terms: Number(row.agree_terms || 0) === 1,
     };
