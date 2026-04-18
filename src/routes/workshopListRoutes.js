@@ -116,6 +116,10 @@ router.get('/workshop-list/list', workshopListController.getWorkshopList);
 router.post('/workshop-list/create', uploadWorkshopImages, workshopListController.createWorkshop);
 
 router.get('/workshop-list/:id/participants', workshopListController.getWorkshopParticipants);
+router.delete(
+	'/workshop-list/participants/:participantId',
+	workshopListController.deleteWorkshopParticipant
+);
 
 /**
  * @openapi

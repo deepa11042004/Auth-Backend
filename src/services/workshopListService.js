@@ -693,6 +693,58 @@ async function deleteWorkshop(workshopId) {
   }
 }
 
+async function deleteWorkshopParticipant(participantId) {
+  const id = toPositiveInt(participantId);
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid participant id',
+      },
+    };
+  }
+
+  const [existingRows] = await db.query(
+    `SELECT id FROM ${REGISTRATION_TABLE} WHERE id = ? LIMIT 1`,
+    [id]
+  );
+
+  if (!existingRows[0]) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Participant not found',
+      },
+    };
+  }
+
+  const [deleteResult] = await db.query(
+    `DELETE FROM ${REGISTRATION_TABLE} WHERE id = ? LIMIT 1`,
+    [id]
+  );
+
+  if (!deleteResult.affectedRows) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Participant not found',
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Participant deleted successfully',
+      deleted_participant_id: id,
+    },
+  };
+}
+
 async function getWorkshopParticipants(workshopId) {
   const id = toPositiveInt(workshopId);
   if (!id) {
@@ -725,6 +777,8 @@ async function getWorkshopParticipants(workshopId) {
       alternative_email,
       institution,
       designation,
+      payment_amount,
+      razorpay_payment_id,
       payment_status,
       agree_recording,
       agree_terms
@@ -734,18 +788,24 @@ async function getWorkshopParticipants(workshopId) {
     [id]
   );
 
-  const participants = rows.map((row) => ({
-    id: Number(row.id),
-    full_name: cleanText(row.full_name),
-    email: cleanText(row.email),
-    contact_number: cleanText(row.contact_number),
-    alternative_email: cleanText(row.alternative_email) || null,
-    institution: cleanText(row.institution),
-    designation: cleanText(row.designation),
-    payment_status: cleanText(row.payment_status) || null,
-    agree_recording: Number(row.agree_recording || 0) === 1,
-    agree_terms: Number(row.agree_terms || 0) === 1,
-  }));
+  const participants = rows.map((row) => {
+    const paymentAmount = Number(row.payment_amount);
+
+    return {
+      id: Number(row.id),
+      full_name: cleanText(row.full_name),
+      email: cleanText(row.email),
+      contact_number: cleanText(row.contact_number),
+      alternative_email: cleanText(row.alternative_email) || null,
+      institution: cleanText(row.institution),
+      designation: cleanText(row.designation),
+      payment_amount: Number.isFinite(paymentAmount) ? paymentAmount : null,
+      razorpay_payment_id: cleanText(row.razorpay_payment_id) || null,
+      payment_status: cleanText(row.payment_status) || null,
+      agree_recording: Number(row.agree_recording || 0) === 1,
+      agree_terms: Number(row.agree_terms || 0) === 1,
+    };
+  });
 
   return {
     status: 200,
@@ -804,6 +864,7 @@ module.exports = {
   createWorkshop,
   updateWorkshop,
   deleteWorkshop,
+  deleteWorkshopParticipant,
   getWorkshopParticipants,
   getWorkshopImageById,
 };

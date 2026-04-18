@@ -127,6 +127,21 @@ async function deleteWorkshop(req, res) {
   }
 }
 
+async function deleteWorkshopParticipant(req, res) {
+  try {
+    const result = await workshopListService.deleteWorkshopParticipant(
+      req.params.participantId
+    );
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    console.error('Workshop participant delete error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete workshop participant',
+    });
+  }
+}
+
 async function getWorkshopParticipants(req, res) {
   try {
     const result = await workshopListService.getWorkshopParticipants(req.params.id);
@@ -188,6 +203,7 @@ module.exports = {
   createWorkshop,
   updateWorkshop,
   deleteWorkshop,
+  deleteWorkshopParticipant,
   getWorkshopParticipants,
   getWorkshopThumbnail,
   getWorkshopCertificate,

@@ -218,6 +218,50 @@ async function fetchPaymentFromRazorpayWithRetry(razorpayClient, paymentId) {
   return { payment: latestPayment, fetchError: lastError };
 }
 
+async function resolvePaymentFromOrderContext(razorpayClient, orderId, paymentId) {
+  const { payment, fetchError } = await fetchPaymentFromRazorpayWithRetry(
+    razorpayClient,
+    paymentId
+  );
+
+  if (payment && String(payment.order_id) === orderId) {
+    return { payment, fetchError: null };
+  }
+
+  let lastError = fetchError;
+
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+    const matchingPayment = items.find(
+      (item) => cleanText(item?.id) === paymentId
+    );
+
+    if (matchingPayment) {
+      return { payment: matchingPayment, fetchError: null };
+    }
+  } catch (err) {
+    lastError = err;
+  }
+
+  return { payment, fetchError: lastError };
+}
+
+async function resolveSuccessfulOrderPayment(razorpayClient, orderId) {
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+
+    const successfulPayment = items.find((item) =>
+      SUCCESSFUL_PAYMENT_STATUSES.has(cleanText(item?.status).toLowerCase())
+    );
+
+    return successfulPayment || null;
+  } catch {
+    return null;
+  }
+}
+
 async function getWorkshopById(workshopId, connection = db) {
   const [rows] = await connection.query(
     `SELECT id, title, fee FROM ${WORKSHOP_TABLE} WHERE id = ? LIMIT 1`,
@@ -466,6 +510,7 @@ async function createPaymentOrder(input) {
     receipt: `workshop_${workshopId}_${Date.now()}`,
     notes: {
       workshop_id: String(workshopId),
+      ...(payerEmail ? { applicant_email: payerEmail } : {}),
     },
   });
 
@@ -514,14 +559,6 @@ async function verifyPaymentAndRegister(input) {
     };
   }
 
-  const amountInPaise = toMoneyInPaise(workshop.fee);
-  if (amountInPaise === null || amountInPaise <= 0) {
-    return {
-      status: 400,
-      body: { message: 'Payment is not required for this workshop' },
-    };
-  }
-
   const { keySecret } = getRazorpayCredentials();
   const razorpayClient = getRazorpayClient();
 
@@ -548,8 +585,59 @@ async function verifyPaymentAndRegister(input) {
     };
   }
 
-  const { payment, fetchError } = await fetchPaymentFromRazorpayWithRetry(
+  let order = null;
+
+  try {
+    order = await razorpayClient.orders.fetch(orderId);
+  } catch (err) {
+    const reason = err instanceof Error ? cleanText(err.message) : '';
+    return {
+      status: 400,
+      body: {
+        message: 'Unable to validate order with Razorpay',
+        ...(reason ? { reason } : {}),
+      },
+    };
+  }
+
+  const orderAmountInPaise = Number(order?.amount);
+  if (!Number.isFinite(orderAmountInPaise) || orderAmountInPaise <= 0) {
+    return {
+      status: 400,
+      body: { message: 'Invalid order amount received from Razorpay' },
+    };
+  }
+
+  const orderCurrency = cleanText(order?.currency).toUpperCase() || PAYMENT_CURRENCY;
+  if (orderCurrency !== PAYMENT_CURRENCY) {
+    return {
+      status: 400,
+      body: {
+        message: `Order currency mismatch. Expected ${PAYMENT_CURRENCY}, received ${orderCurrency || 'unknown'}`,
+      },
+    };
+  }
+
+  const orderWorkshopId = toPositiveInt(order?.notes?.workshop_id);
+  if (orderWorkshopId && orderWorkshopId !== workshopId) {
+    return {
+      status: 400,
+      body: { message: 'Order does not belong to the selected workshop' },
+    };
+  }
+
+  const orderApplicantEmail = normalizeEmail(order?.notes?.applicant_email);
+  const providedEmail = normalizeEmail(input?.email);
+  if (orderApplicantEmail && providedEmail && orderApplicantEmail !== providedEmail) {
+    return {
+      status: 400,
+      body: { message: 'Order does not belong to the provided email address' },
+    };
+  }
+
+  const { payment, fetchError } = await resolvePaymentFromOrderContext(
     razorpayClient,
+    orderId,
     paymentId
   );
 
@@ -571,10 +659,20 @@ async function verifyPaymentAndRegister(input) {
     };
   }
 
-  if (Number(payment.amount) !== amountInPaise) {
+  if (Number(payment.amount) !== orderAmountInPaise) {
     return {
       status: 400,
-      body: { message: 'Paid amount does not match workshop fee' },
+      body: { message: 'Paid amount does not match workshop order amount' },
+    };
+  }
+
+  const paymentCurrency = cleanText(payment.currency).toUpperCase() || orderCurrency;
+  if (paymentCurrency !== orderCurrency) {
+    return {
+      status: 400,
+      body: {
+        message: `Payment currency mismatch. Expected ${orderCurrency}, received ${paymentCurrency || 'unknown'}`,
+      },
     };
   }
 
@@ -591,8 +689,8 @@ async function verifyPaymentAndRegister(input) {
   const registrationResult = await registerForWorkshop({
     ...input,
     workshop_id: workshopId,
-    payment_amount: Number(payment.amount) / 100,
-    payment_currency: cleanText(payment.currency) || PAYMENT_CURRENCY,
+    payment_amount: orderAmountInPaise / 100,
+    payment_currency: paymentCurrency,
     razorpay_order_id: orderId,
     razorpay_payment_id: paymentId,
     payment_status: cleanText(payment.status) || 'captured',
@@ -610,8 +708,8 @@ async function verifyPaymentAndRegister(input) {
             email: normalizeEmail(input.email),
           },
           payment: {
-            amount: Number(payment.amount) / 100,
-            currency: cleanText(payment.currency) || PAYMENT_CURRENCY,
+            amount: orderAmountInPaise / 100,
+            currency: paymentCurrency,
             razorpay_order_id: orderId,
             razorpay_payment_id: paymentId,
             status: payment.status,
@@ -630,8 +728,8 @@ async function verifyPaymentAndRegister(input) {
       message: 'Payment verified and workshop registration successful',
       registration: registrationResult.body.registration,
       payment: {
-        amount: Number(payment.amount) / 100,
-        currency: cleanText(payment.currency) || PAYMENT_CURRENCY,
+        amount: orderAmountInPaise / 100,
+        currency: paymentCurrency,
         razorpay_order_id: orderId,
         razorpay_payment_id: paymentId,
         status: payment.status,
@@ -768,6 +866,79 @@ async function registerForWorkshop(input) {
     const hasPaymentIdentifiers = Boolean(razorpayOrderId || razorpayPaymentId);
     const isPaidWorkshop = workshopFeeRupees !== null && workshopFeeRupees > 0;
     const isFailedAttempt = isFailedPaymentStatus(paymentStatus);
+    let effectiveFailedAttempt = isFailedAttempt;
+    let reconciledSuccessfulPayment = null;
+
+    if (isPaidWorkshop && isFailedAttempt && razorpayOrderId) {
+      const razorpayClient = getRazorpayClient();
+
+      if (razorpayClient) {
+        let orderBelongsToRegistration = true;
+
+        try {
+          const order = await razorpayClient.orders.fetch(razorpayOrderId);
+          const orderWorkshopId = toPositiveInt(order?.notes?.workshop_id);
+          const orderApplicantEmail = normalizeEmail(order?.notes?.applicant_email);
+
+          if (orderWorkshopId && orderWorkshopId !== workshopId) {
+            orderBelongsToRegistration = false;
+          }
+
+          if (orderApplicantEmail && orderApplicantEmail !== email) {
+            orderBelongsToRegistration = false;
+          }
+        } catch {
+          // Continue with fallback behavior when Razorpay lookup fails.
+        }
+
+        if (orderBelongsToRegistration) {
+          if (razorpayPaymentId) {
+            try {
+              const resolved = await resolvePaymentFromOrderContext(
+                razorpayClient,
+                razorpayOrderId,
+                razorpayPaymentId
+              );
+
+              const resolvedStatus = cleanText(resolved.payment?.status).toLowerCase();
+              if (
+                resolved.payment
+                && String(resolved.payment.order_id) === razorpayOrderId
+                && SUCCESSFUL_PAYMENT_STATUSES.has(resolvedStatus)
+              ) {
+                reconciledSuccessfulPayment = resolved.payment;
+              }
+            } catch {
+              // Ignore reconciliation failures and preserve failed-attempt fallback behavior.
+            }
+          }
+
+          if (!reconciledSuccessfulPayment) {
+            const resolvedFromOrder = await resolveSuccessfulOrderPayment(
+              razorpayClient,
+              razorpayOrderId
+            );
+
+            if (
+              resolvedFromOrder
+              && String(resolvedFromOrder.order_id) === razorpayOrderId
+            ) {
+              reconciledSuccessfulPayment = resolvedFromOrder;
+            }
+          }
+        }
+      }
+    }
+
+    if (reconciledSuccessfulPayment) {
+      effectiveFailedAttempt = false;
+    }
+
+    const reconciledAmountInPaise = Number(reconciledSuccessfulPayment?.amount);
+    const reconciledCurrency = cleanText(reconciledSuccessfulPayment?.currency).toUpperCase();
+    const reconciledPaymentId = cleanText(reconciledSuccessfulPayment?.id);
+    const reconciledStatus = cleanText(reconciledSuccessfulPayment?.status).toLowerCase();
+    const reconciledMode = cleanText(reconciledSuccessfulPayment?.method);
 
     if (isPaidWorkshop && !paymentStatus && !hasPaymentIdentifiers) {
       await connection.rollback();
@@ -786,18 +957,34 @@ async function registerForWorkshop(input) {
     }
 
     const resolvedPaymentAmount =
-      paymentAmount !== null
-        ? paymentAmount
-        : workshopFeeRupees;
+      reconciledSuccessfulPayment
+        ? (
+          Number.isFinite(reconciledAmountInPaise) && reconciledAmountInPaise >= 0
+            ? reconciledAmountInPaise / 100
+            : workshopFeeRupees
+        )
+        : (paymentAmount !== null
+          ? paymentAmount
+          : workshopFeeRupees);
     const resolvedPaymentCurrency =
-      paymentCurrency || (resolvedPaymentAmount !== null ? PAYMENT_CURRENCY : null);
+      reconciledSuccessfulPayment
+        ? (reconciledCurrency || PAYMENT_CURRENCY)
+        : (paymentCurrency || (resolvedPaymentAmount !== null ? PAYMENT_CURRENCY : null));
+    const resolvedRazorpayPaymentId =
+      reconciledSuccessfulPayment
+        ? (reconciledPaymentId || razorpayPaymentId)
+        : razorpayPaymentId;
     const resolvedPaymentStatus =
-      paymentStatus
-      || (resolvedPaymentAmount === 0
-        ? 'not_required'
-        : (hasPaymentIdentifiers ? 'captured' : 'pending'));
+      reconciledSuccessfulPayment
+        ? (reconciledStatus || 'captured')
+        : (paymentStatus
+          || (resolvedPaymentAmount === 0
+            ? 'not_required'
+            : (hasPaymentIdentifiers ? 'captured' : 'pending')));
     const resolvedPaymentMode =
-      paymentMode || (resolvedPaymentAmount === 0 ? 'free' : (isFailedAttempt ? 'failed' : null));
+      reconciledSuccessfulPayment
+        ? (reconciledMode || paymentMode || 'gateway_verified')
+        : (paymentMode || (resolvedPaymentAmount === 0 ? 'free' : (effectiveFailedAttempt ? 'failed' : null)));
     const shouldFinalizeRegistration = isCompletedRegistrationStatus(resolvedPaymentStatus);
     let reusedFailedAttempt = false;
 
@@ -817,7 +1004,7 @@ async function registerForWorkshop(input) {
         paymentAmount: resolvedPaymentAmount,
         paymentCurrency: resolvedPaymentCurrency,
         razorpayOrderId,
-        razorpayPaymentId,
+        razorpayPaymentId: resolvedRazorpayPaymentId,
         paymentStatus: resolvedPaymentStatus,
         paymentMode: resolvedPaymentMode,
       });
@@ -850,7 +1037,7 @@ async function registerForWorkshop(input) {
               resolvedPaymentAmount,
               resolvedPaymentCurrency,
               razorpayOrderId,
-              razorpayPaymentId,
+              resolvedRazorpayPaymentId,
               resolvedPaymentStatus,
               resolvedPaymentMode,
               Number(existingRow.id),
@@ -911,7 +1098,7 @@ async function registerForWorkshop(input) {
             amount: resolvedPaymentAmount,
             currency: resolvedPaymentCurrency,
             razorpay_order_id: razorpayOrderId,
-            razorpay_payment_id: razorpayPaymentId,
+            razorpay_payment_id: resolvedRazorpayPaymentId,
             status: resolvedPaymentStatus,
             mode: resolvedPaymentMode,
           },
