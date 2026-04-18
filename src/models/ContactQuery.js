@@ -95,18 +95,43 @@ async function ensureContactQueryTable(connection = db) {
       subject VARCHAR(200) NOT NULL,
       message TEXT NOT NULL,
       source_path VARCHAR(255) NULL,
+      is_solved TINYINT(1) NOT NULL DEFAULT 0,
+      solved_at TIMESTAMP NULL DEFAULT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_contact_queries_created_at (created_at),
       INDEX idx_contact_queries_email (email)
     )`
   );
+
+  const [isSolvedColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${CONTACT_QUERY_TABLE} LIKE 'is_solved'`
+  );
+
+  if (isSolvedColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${CONTACT_QUERY_TABLE}
+       ADD COLUMN is_solved TINYINT(1) NOT NULL DEFAULT 0 AFTER source_path`
+    );
+  }
+
+  const [solvedAtColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${CONTACT_QUERY_TABLE} LIKE 'solved_at'`
+  );
+
+  if (solvedAtColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${CONTACT_QUERY_TABLE}
+       ADD COLUMN solved_at TIMESTAMP NULL DEFAULT NULL AFTER is_solved`
+    );
+  }
 }
 
 function mapContactQueryRow(row) {
   const fullName = cleanText(row.full_name);
   const subject = cleanText(row.subject);
   const createdAtUnix = Number(row.created_at_unix);
+  const isSolved = Number(row.is_solved || 0) === 1;
 
   return {
     id: Number(row.id),
@@ -118,6 +143,8 @@ function mapContactQueryRow(row) {
     subject_name: subject,
     message: cleanText(row.message),
     source_path: cleanText(row.source_path) || null,
+    is_solved: isSolved,
+    solved_at: formatDateTime(row.solved_at),
     created_at: formatDateTime(row.created_at),
     created_at_unix: Number.isFinite(createdAtUnix) && createdAtUnix > 0
       ? createdAtUnix
@@ -179,6 +206,48 @@ async function deleteContactQuery(id, connection = db) {
   return Number(result.affectedRows) > 0;
 }
 
+async function markContactQueryAsSolved(id, connection = db) {
+  await connection.query(
+    `UPDATE ${CONTACT_QUERY_TABLE}
+     SET is_solved = 1,
+         solved_at = COALESCE(solved_at, CURRENT_TIMESTAMP)
+     WHERE id = ?
+     LIMIT 1`,
+    [id]
+  );
+
+  const [rows] = await connection.query(
+    `SELECT *, UNIX_TIMESTAMP(created_at) AS created_at_unix
+     FROM ${CONTACT_QUERY_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [id]
+  );
+
+  return rows[0] ? mapContactQueryRow(rows[0]) : null;
+}
+
+async function markContactQueryAsPending(id, connection = db) {
+  await connection.query(
+    `UPDATE ${CONTACT_QUERY_TABLE}
+     SET is_solved = 0,
+         solved_at = NULL
+     WHERE id = ?
+     LIMIT 1`,
+    [id]
+  );
+
+  const [rows] = await connection.query(
+    `SELECT *, UNIX_TIMESTAMP(created_at) AS created_at_unix
+     FROM ${CONTACT_QUERY_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [id]
+  );
+
+  return rows[0] ? mapContactQueryRow(rows[0]) : null;
+}
+
 module.exports = {
   CONTACT_QUERY_TABLE,
   normalizeContactQueryPayload,
@@ -186,4 +255,6 @@ module.exports = {
   createContactQuery,
   getContactQueries,
   deleteContactQuery,
+  markContactQueryAsSolved,
+  markContactQueryAsPending,
 };

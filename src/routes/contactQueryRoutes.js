@@ -17,5 +17,7 @@ const router = express.Router();
 router.post('/contact-queries', contactQueryController.createContactQuery);
 router.get('/contact-queries', contactQueryController.getContactQueries);
 router.delete('/contact-queries/:id', contactQueryController.deleteContactQuery);
+router.put('/contact-queries/:id/solve', contactQueryController.markContactQuerySolved);
+router.put('/contact-queries/:id/pending', contactQueryController.markContactQueryPending);
 
 module.exports = router;

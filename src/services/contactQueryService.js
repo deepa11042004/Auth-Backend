@@ -91,8 +91,84 @@ async function removeContactQuery(rawId) {
   };
 }
 
+async function markContactQuerySolved(rawId) {
+  await ContactQuery.ensureContactQueryTable();
+
+  const id = parseContactQueryId(rawId);
+
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid contact query id',
+      },
+    };
+  }
+
+  const updatedQuery = await ContactQuery.markContactQueryAsSolved(id);
+
+  if (!updatedQuery) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Contact query not found',
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Contact query marked as solved',
+      data: updatedQuery,
+    },
+  };
+}
+
+async function markContactQueryPending(rawId) {
+  await ContactQuery.ensureContactQueryTable();
+
+  const id = parseContactQueryId(rawId);
+
+  if (!id) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid contact query id',
+      },
+    };
+  }
+
+  const updatedQuery = await ContactQuery.markContactQueryAsPending(id);
+
+  if (!updatedQuery) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Contact query not found',
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Contact query marked as pending',
+      data: updatedQuery,
+    },
+  };
+}
+
 module.exports = {
   submitContactQuery,
   listContactQueries,
   removeContactQuery,
+  markContactQuerySolved,
+  markContactQueryPending,
 };

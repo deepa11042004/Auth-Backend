@@ -27,8 +27,28 @@ async function deleteContactQuery(req, res, next) {
   }
 }
 
+async function markContactQuerySolved(req, res, next) {
+  try {
+    const result = await contactQueryService.markContactQuerySolved(req.params.id);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function markContactQueryPending(req, res, next) {
+  try {
+    const result = await contactQueryService.markContactQueryPending(req.params.id);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   createContactQuery,
   getContactQueries,
   deleteContactQuery,
+  markContactQuerySolved,
+  markContactQueryPending,
 };
