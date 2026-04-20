@@ -45,6 +45,15 @@ async function getStudentRegistrations(req, res, next) {
   }
 }
 
+async function deleteStudentRegistration(req, res, next) {
+  try {
+    const result = await summerSchoolService.deleteStudentRegistration(req.params.id);
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function getSummerSchoolRegistrationSettings(req, res, next) {
   try {
     const result = await summerSchoolService.getSummerSchoolRegistrationSettings();
@@ -69,6 +78,7 @@ module.exports = {
   logPaymentAttempt,
   createStudentRegistration,
   getStudentRegistrations,
+  deleteStudentRegistration,
   getSummerSchoolRegistrationSettings,
   updateSummerSchoolRegistrationSettings,
 };

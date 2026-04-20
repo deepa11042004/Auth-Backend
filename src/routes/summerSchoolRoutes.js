@@ -39,6 +39,11 @@ router.get(
   summerSchoolController.getStudentRegistrations
 );
 
+router.delete(
+  '/summer-school/student-registration/:id',
+  summerSchoolController.deleteStudentRegistration
+);
+
 router.get(
   '/summer-school/student-registration/settings',
   summerSchoolController.getSummerSchoolRegistrationSettings

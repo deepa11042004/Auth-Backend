@@ -1,5 +1,32 @@
 const institutionalRegistrationService = require('../services/institutionalRegistrationService');
 
+async function createInstitutionalPaymentOrder(req, res, next) {
+  try {
+    const result = await institutionalRegistrationService.createPaymentOrder(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function verifyInstitutionalPaymentAndRegister(req, res, next) {
+  try {
+    const result = await institutionalRegistrationService.verifyPaymentAndRegister(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+async function logInstitutionalPaymentAttempt(req, res, next) {
+  try {
+    const result = await institutionalRegistrationService.logPaymentAttempt(req.body || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function createInstitutionalRegistration(req, res, next) {
   try {
     const result = await institutionalRegistrationService.registerInstitution(req.body || {});
@@ -19,6 +46,9 @@ async function getInstitutionalRegistrations(req, res, next) {
 }
 
 module.exports = {
+  createInstitutionalPaymentOrder,
+  verifyInstitutionalPaymentAndRegister,
+  logInstitutionalPaymentAttempt,
   createInstitutionalRegistration,
   getInstitutionalRegistrations,
 };

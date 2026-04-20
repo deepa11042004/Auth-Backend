@@ -32,6 +32,15 @@ function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function parseStudentRegistrationId(rawId) {
+  const numeric = Number(rawId);
+  if (!Number.isInteger(numeric) || numeric <= 0) {
+    return 0;
+  }
+
+  return numeric;
+}
+
 function normalizeEmail(value) {
   return cleanText(value).toLowerCase();
 }
@@ -911,6 +920,62 @@ async function listStudentRegistrations() {
   };
 }
 
+async function deleteStudentRegistration(rawId) {
+  await StudentRegistration.ensureStudentRegistrationTable();
+
+  const registrationId = parseStudentRegistrationId(rawId);
+
+  if (!registrationId) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid summer school registration id',
+      },
+    };
+  }
+
+  const [rows] = await db.query(
+    `SELECT id, full_name, email
+     FROM ${StudentRegistration.STUDENT_REGISTRATION_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [registrationId]
+  );
+
+  const existing = rows[0] || null;
+
+  if (!existing) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Summer school registration not found',
+      },
+    };
+  }
+
+  await db.query(
+    `DELETE FROM ${StudentRegistration.STUDENT_REGISTRATION_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [registrationId]
+  );
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Summer school registration deleted successfully',
+      data: {
+        id: Number(existing.id),
+        full_name: cleanText(existing.full_name),
+        email: cleanText(existing.email),
+      },
+    },
+  };
+}
+
 async function getSummerSchoolRegistrationSettings() {
   const settings = await readSummerSchoolSettings();
 
@@ -985,6 +1050,7 @@ module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
   listStudentRegistrations,
+  deleteStudentRegistration,
   getSummerSchoolRegistrationSettings,
   updateSummerSchoolRegistrationSettings,
 };

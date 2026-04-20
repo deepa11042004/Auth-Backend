@@ -15,6 +15,21 @@ const router = express.Router();
  *     summary: Get all institutional registration applications for admin panel
  */
 router.post(
+  '/institutional-registration/create-order',
+  institutionalRegistrationController.createInstitutionalPaymentOrder
+);
+
+router.post(
+  '/institutional-registration/verify-payment',
+  institutionalRegistrationController.verifyInstitutionalPaymentAndRegister
+);
+
+router.post(
+  '/institutional-registration/log-payment-attempt',
+  institutionalRegistrationController.logInstitutionalPaymentAttempt
+);
+
+router.post(
   '/institutional-registration',
   institutionalRegistrationController.createInstitutionalRegistration
 );
