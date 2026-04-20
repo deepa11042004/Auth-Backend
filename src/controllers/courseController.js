@@ -41,38 +41,8 @@ async function createCourse(req, res, next) {
   }
 }
 
-async function createSection(req, res, next) {
-  try {
-    const result = await courseService.createSection(req.body || {});
-    return res.status(result.status).json(result.body);
-  } catch (err) {
-    return next(err);
-  }
-}
-
-async function createLecture(req, res, next) {
-  try {
-    const result = await courseService.createLecture(req.body || {});
-    return res.status(result.status).json(result.body);
-  } catch (err) {
-    return next(err);
-  }
-}
-
-async function enrollCourse(req, res, next) {
-  try {
-    const result = await courseService.enrollInCourse(req.body || {}, req.user?.userId);
-    return res.status(result.status).json(result.body);
-  } catch (err) {
-    return next(err);
-  }
-}
-
 module.exports = {
   getPublishedCourses,
   getCourseBySlug,
   createCourse,
-  createSection,
-  createLecture,
-  enrollCourse,
 };

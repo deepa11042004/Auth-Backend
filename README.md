@@ -14,9 +14,6 @@ Node.js + Express backend with JWT authentication and LMS course APIs using MySQ
   - published courses list
   - full course details by slug
   - create course
-  - create section
-  - create lecture
-  - enroll in course
 - Workshop APIs:
   - workshop enrollment
   - workshop list creation
@@ -617,174 +614,6 @@ Server error:
 - 500 { "message": "Internal server error" }
 
 ---
-
-### 9.4 Create Section
-Method and path:
-- POST /api/sections
-
-Auth required:
-- Yes (Bearer token)
-
-Allowed roles:
-- instructor
-- admin
-- super_admin
-
-Request body:
-- course_id or courseId (required)
-- title (required)
-- order (optional, defaults to 1 if invalid/missing)
-
-Example request:
-```json
-{
-  "course_id": 1,
-  "title": "Getting Started",
-  "order": 1
-}
-```
-
-Success response:
-- 201
-```json
-{
-  "message": "Section created successfully",
-  "section": {
-    "id": 10,
-    "course_id": 1,
-    "title": "Getting Started",
-    "order": 1
-  }
-}
-```
-
-Business errors:
-- 400 { "message": "course_id and title are required" }
-- 404 { "message": "Course not found" }
-
-Auth/role errors:
-- 401 { "message": "Authorization token required" }
-- 401 { "message": "Invalid or expired token" }
-- 401 { "message": "Unauthorized" }
-- 403 { "message": "Forbidden" }
-
-Server error:
-- 500 { "message": "Internal server error" }
-
----
-
-### 9.5 Create Lecture
-Method and path:
-- POST /api/lectures
-
-Auth required:
-- Yes (Bearer token)
-
-Allowed roles:
-- instructor
-- admin
-- super_admin
-
-Request body:
-- section_id or sectionId (required)
-- title (required)
-- order (optional, defaults to 1)
-- duration or duration_minutes (optional, defaults to 0)
-- video_url or videoUrl (optional)
-- isPreview or is_preview (optional, defaults to false)
-
-Example request:
-```json
-{
-  "section_id": 10,
-  "title": "Install Node",
-  "order": 1,
-  "duration": 12,
-  "video_url": "https://cdn.example.com/install-node.mp4",
-  "isPreview": true
-}
-```
-
-Success response:
-- 201
-```json
-{
-  "message": "Lecture created successfully",
-  "lecture": {
-    "id": 101,
-    "section_id": 10,
-    "title": "Install Node",
-    "order": 1,
-    "durationMinutes": 12,
-    "videoUrl": "https://cdn.example.com/install-node.mp4",
-    "isPreview": true
-  }
-}
-```
-
-Business errors:
-- 400 { "message": "section_id and title are required" }
-- 404 { "message": "Section not found" }
-
-Auth/role errors:
-- 401 { "message": "Authorization token required" }
-- 401 { "message": "Invalid or expired token" }
-- 401 { "message": "Unauthorized" }
-- 403 { "message": "Forbidden" }
-
-Server error:
-- 500 { "message": "Internal server error" }
-
----
-
-### 9.6 Enroll in Course
-Method and path:
-- POST /api/enroll
-
-Auth required:
-- Yes (Bearer token)
-
-Request body:
-- course_id or courseId (required)
-
-Behavior:
-- user_id is taken from JWT payload (userId)
-- prevents duplicate enrollments
-- updates courses.enrolled_students aggregate count
-
-Example request:
-```json
-{
-  "course_id": 1
-}
-```
-
-Success response:
-- 201
-```json
-{
-  "message": "Enrollment successful",
-  "enrollment": {
-    "user_id": 7,
-    "course_id": 1
-  }
-}
-```
-
-Business errors:
-- 400 { "message": "course_id is required" }
-- 400 { "message": "Only published courses can be enrolled" }
-- 404 { "message": "User not found" }
-- 404 { "message": "Course not found" }
-- 409 { "message": "Already enrolled in this course" }
-- 401 { "message": "Unauthorized" }
-
-Auth errors:
-- 401 { "message": "Authorization token required" }
-- 401 { "message": "Invalid or expired token" }
-
-Server error:
-- 500 { "message": "Internal server error" }
 
 ## 10. Workshop Registration API Details
 Base path: /api/workshop/enrollment
@@ -1784,9 +1613,6 @@ Server error:
 - GET /api/courses
 - GET /api/courses/:slug
 - POST /api/courses
-- POST /api/sections
-- POST /api/lectures
-- POST /api/enroll
 
 - POST /api/workshop/enrollment
 - POST /api/workshop/enrollment/create-order
@@ -1820,17 +1646,16 @@ Server error:
 ## 16. Recommended End-to-End Test Flow
 1. Register and login a user.
 2. Call /auth/profile with bearer token.
-3. Create course, section, and lecture using instructor/admin role token.
+3. Create course using instructor/admin role token.
 4. Fetch /api/courses and /api/courses/:slug.
-5. Enroll in course using /api/enroll.
-6. Create workshop with /api/workshop-list/create.
-7. Fetch workshop list and workshop by id.
-8. Create workshop order with /api/workshop/enrollment/create-order.
-9. Verify workshop payment and register via /api/workshop/enrollment/verify-payment.
-10. Fetch workshop participants via /api/workshop-list/:id/participants.
-11. Register mentor via /api/mentor/register.
-12. List mentor requests, approve one, and verify via /api/mentor/list.
-13. Create internship order, verify payment, then check /api/internship/registration/list.
+5. Create workshop with /api/workshop-list/create.
+6. Fetch workshop list and workshop by id.
+7. Create workshop order with /api/workshop/enrollment/create-order.
+8. Verify workshop payment and register via /api/workshop/enrollment/verify-payment.
+9. Fetch workshop participants via /api/workshop-list/:id/participants.
+10. Register mentor via /api/mentor/register.
+11. List mentor requests, approve one, and verify via /api/mentor/list.
+12. Create internship order, verify payment, then check /api/internship/registration/list.
 
 ## 17. Notes
 - Passwords are hashed with bcrypt (salt rounds = 10).
