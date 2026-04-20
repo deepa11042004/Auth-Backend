@@ -13,6 +13,11 @@ function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function parsePositiveId(rawId) {
+  const numeric = Number(rawId);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : 0;
+}
+
 function toNullableText(value) {
   const cleaned = cleanText(value);
   return cleaned || null;
@@ -442,10 +447,41 @@ async function getInstitutionalRegistrations(connection = db) {
   return rows.map(mapInstitutionalRegistrationRow);
 }
 
+async function deleteInstitutionalRegistration(rawId, connection = db) {
+  const registrationId = parsePositiveId(rawId);
+
+  if (!registrationId) {
+    return null;
+  }
+
+  const [rows] = await connection.query(
+    `SELECT *
+     FROM ${INSTITUTIONAL_REGISTRATION_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [registrationId],
+  );
+
+  const existing = rows[0];
+  if (!existing) {
+    return null;
+  }
+
+  await connection.query(
+    `DELETE FROM ${INSTITUTIONAL_REGISTRATION_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [registrationId],
+  );
+
+  return mapInstitutionalRegistrationRow(existing);
+}
+
 module.exports = {
   INSTITUTIONAL_REGISTRATION_TABLE,
   normalizeInstitutionalRegistrationPayload,
   ensureInstitutionalRegistrationTable,
   createInstitutionalRegistration,
   getInstitutionalRegistrations,
+  deleteInstitutionalRegistration,
 };

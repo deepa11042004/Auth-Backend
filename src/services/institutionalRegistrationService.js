@@ -492,6 +492,45 @@ async function logPaymentAttempt(payload) {
   };
 }
 
+async function deleteInstitutionalRegistration(rawId) {
+  await InstitutionalRegistration.ensureInstitutionalRegistrationTable();
+
+  const numericId = Number(rawId);
+
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'Invalid institutional registration id',
+      },
+    };
+  }
+
+  const registration = await InstitutionalRegistration.deleteInstitutionalRegistration(
+    numericId,
+  );
+
+  if (!registration) {
+    return {
+      status: 404,
+      body: {
+        success: false,
+        message: 'Institutional registration not found',
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
+      success: true,
+      message: 'Institutional application deleted successfully',
+      data: registration,
+    },
+  };
+}
+
 async function listInstitutionalRegistrations() {
   await InstitutionalRegistration.ensureInstitutionalRegistrationTable();
 
@@ -511,5 +550,6 @@ module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
   logPaymentAttempt,
+  deleteInstitutionalRegistration,
   listInstitutionalRegistrations,
 };

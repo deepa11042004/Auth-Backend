@@ -34,6 +34,11 @@ router.post(
   institutionalRegistrationController.createInstitutionalRegistration
 );
 
+router.delete(
+  '/institutional-registration/:id',
+  institutionalRegistrationController.deleteInstitutionalRegistration,
+);
+
 router.get(
   '/institutional-registration',
   institutionalRegistrationController.getInstitutionalRegistrations

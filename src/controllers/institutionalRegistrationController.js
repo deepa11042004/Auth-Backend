@@ -27,6 +27,17 @@ async function logInstitutionalPaymentAttempt(req, res, next) {
   }
 }
 
+async function deleteInstitutionalRegistration(req, res, next) {
+  try {
+    const result = await institutionalRegistrationService.deleteInstitutionalRegistration(
+      req.params.id,
+    );
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 async function createInstitutionalRegistration(req, res, next) {
   try {
     const result = await institutionalRegistrationService.registerInstitution(req.body || {});
@@ -49,6 +60,7 @@ module.exports = {
   createInstitutionalPaymentOrder,
   verifyInstitutionalPaymentAndRegister,
   logInstitutionalPaymentAttempt,
+  deleteInstitutionalRegistration,
   createInstitutionalRegistration,
   getInstitutionalRegistrations,
 };
