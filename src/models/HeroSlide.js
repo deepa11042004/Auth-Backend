@@ -119,15 +119,17 @@ function formatDateTime(value) {
 function normalizeHeroSlidePayload(input = {}, options = {}) {
   const file = options.file && typeof options.file === 'object' ? options.file : null;
   const mediaType = normalizeMediaType(input.media_type || input.mediaType, file);
+  const mediaData = file && Buffer.isBuffer(file.buffer) ? file.buffer : null;
+  const mediaMimeType = toNullableText(file ? file.mimetype : null);
 
   const payload = {
     title: cleanText(input.title),
     subtitle: toNullableText(input.subtitle),
     description: toNullableText(input.description),
     badge_text: toNullableText(input.badge_text || input.badgeText),
-    media_type: mediaType,
-    media_data: file && Buffer.isBuffer(file.buffer) ? file.buffer : null,
-    media_mime_type: toNullableText(file ? file.mimetype : null),
+    media_type: mediaType || null,
+    media_data: mediaData,
+    media_mime_type: mediaData ? mediaMimeType : null,
     cta_text: toNullableText(input.cta_text || input.ctaText),
     cta_link: toNullableText(input.cta_link || input.ctaLink),
     secondary_cta_text: toNullableText(
@@ -142,20 +144,12 @@ function normalizeHeroSlidePayload(input = {}, options = {}) {
 
   const errors = [];
 
-  if (!payload.title) {
-    errors.push('title is required');
+  if (payload.media_data && !payload.media_type) {
+    errors.push('media_type must be image or video when media file is uploaded');
   }
 
-  if (!payload.media_type) {
-    errors.push('media_type is required and must be image or video');
-  }
-
-  if (!payload.media_data) {
-    errors.push('media file is required');
-  }
-
-  if (!payload.media_mime_type) {
-    errors.push('media MIME type is required');
+  if (payload.media_data && !payload.media_mime_type) {
+    errors.push('media MIME type is required when media file is uploaded');
   }
 
   if (payload.position !== null && payload.position < 1) {
@@ -201,13 +195,7 @@ function normalizeHeroSlideUpdatePayload(input = {}, options = {}) {
   const errors = [];
 
   if (hasOwnField(source, ['title'])) {
-    const title = cleanText(source.title);
-
-    if (!title) {
-      errors.push('title cannot be empty');
-    } else {
-      updates.title = title;
-    }
+    updates.title = cleanText(source.title);
   }
 
   if (hasOwnField(source, ['subtitle'])) {
@@ -250,7 +238,7 @@ function normalizeHeroSlideUpdatePayload(input = {}, options = {}) {
   if (hasOwnField(source, ['position'])) {
     const position = toNullableInteger(source.position);
 
-    if (position === null || position < 1) {
+    if (position !== null && position < 1) {
       errors.push('position must be a positive integer');
     } else {
       updates.position = position;
@@ -362,6 +350,15 @@ async function ensureHeroSlidesTable(connection = db) {
       );
     }
   }
+
+  await connection.query(
+    `ALTER TABLE ${HERO_SLIDE_TABLE}
+     MODIFY COLUMN title VARCHAR(255) NULL,
+     MODIFY COLUMN media_type ENUM('image', 'video') NULL,
+     MODIFY COLUMN media_data LONGBLOB NULL,
+     MODIFY COLUMN media_mime_type VARCHAR(120) NULL,
+     MODIFY COLUMN position INT NULL DEFAULT NULL`
+  );
 }
 
 function mapHeroSlideRow(row) {
@@ -529,6 +526,9 @@ async function getHeroSlides(options = {}, connection = db) {
               updated_at
        FROM ${HERO_SLIDE_TABLE}
        WHERE is_active = 1
+         AND media_type IN ('image', 'video')
+         AND media_data IS NOT NULL
+         AND media_mime_type IS NOT NULL
        ORDER BY position ASC, id ASC`
     )
     : await connection.query(
