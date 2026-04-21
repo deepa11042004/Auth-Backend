@@ -4,8 +4,6 @@ const lmsDB = db.lmsDB;
 const bsercDB = db.bsercDB || db;
 
 const ALLOWED_LEVELS = new Set(['Beginner', 'Intermediate', 'Advanced']);
-const ALLOWED_STATUSES = new Set(['draft', 'published', 'pending']);
-const ALLOWED_VISIBILITY = new Set(['public', 'private', 'unlisted']);
 
 function cleanText(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -14,6 +12,47 @@ function cleanText(value) {
 function nullableText(value) {
   const cleaned = cleanText(value);
   return cleaned || null;
+}
+
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildSlugBase(rawSlug, title) {
+  const source = cleanText(rawSlug) || cleanText(title) || `course-${Date.now()}`;
+  const normalized = slugify(source) || `course-${Date.now()}`;
+  return normalized.slice(0, 120).replace(/-+$/g, '') || 'course';
+}
+
+function generateSlugSuffix() {
+  const randomPart = Math.random().toString(36).slice(2, 6);
+  const timePart = Date.now().toString(36).slice(-4);
+  return `${randomPart}${timePart}`;
+}
+
+async function ensureUniqueSlug(rawSlug, title) {
+  const base = buildSlugBase(rawSlug, title);
+  let candidate = base;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const [rows] = await lmsDB.query('SELECT id FROM courses WHERE slug = ? LIMIT 1', [candidate]);
+    if (!rows[0]) {
+      return candidate;
+    }
+
+    const suffix = generateSlugSuffix();
+    const maxBaseLength = Math.max(1, 120 - suffix.length - 1);
+    const trimmedBase = base.slice(0, maxBaseLength).replace(/-+$/g, '') || 'course';
+    candidate = `${trimmedBase}-${suffix}`;
+  }
+
+  throw new Error('Could not generate a unique slug');
 }
 
 function toPositiveInt(value, fallback) {
@@ -72,10 +111,32 @@ function mapCourseCard(row) {
     id: row.id,
     title: row.title,
     slug: row.slug,
+    subtitle: row.subtitle,
+    description: row.description,
+    category: row.category,
+    level: row.level,
+    language: row.language,
     thumbnail: row.thumbnail,
     price: row.price === null ? 0 : Number(row.price),
-    rating: Number(row.rating || 0),
-    enrolledStudents: Number(row.enrolledStudents || 0),
+    discount_price: row.discount_price === null ? null : Number(row.discount_price),
+    currency: row.currency,
+    is_paid: Boolean(row.is_paid),
+    lifetime_access: Boolean(row.lifetime_access),
+    certificate_available: Boolean(row.certificate_available),
+    instructor_id: row.instructor_id,
+    total_duration_minutes: Number(row.total_duration_minutes || 0),
+    enrolled_students: Number(row.enrolled_students || 0),
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    // Compatibility fields consumed by existing frontend code.
+    discountPrice: row.discount_price === null ? null : Number(row.discount_price),
+    isPaid: Boolean(row.is_paid),
+    lifetimeAccess: Boolean(row.lifetime_access),
+    certificateAvailable: Boolean(row.certificate_available),
+    instructorId: row.instructor_id,
+    totalDurationMinutes: Number(row.total_duration_minutes || 0),
+    enrolledStudents: Number(row.enrolled_students || 0),
+    rating: 0,
   };
 }
 
@@ -84,31 +145,31 @@ async function getPublishedCourses({ page = 1, limit = 20 } = {}) {
   const safeLimit = Math.min(toPositiveInt(limit, 20), 100);
   const offset = (safePage - 1) * safeLimit;
 
-  const [countRows] = await lmsDB.query(
-    "SELECT COUNT(*) AS total FROM courses WHERE status = 'published'"
-  );
+  const [countRows] = await lmsDB.query('SELECT COUNT(*) AS total FROM courses');
 
   const [rows] = await lmsDB.query(
     `SELECT
       c.id,
       c.title,
       c.slug,
-      COALESCE(c.thumbnail_medium, c.thumbnail_large, c.thumbnail_small) AS thumbnail,
+      c.subtitle,
+      c.description,
+      c.category,
+      c.level,
+      c.language,
+      c.thumbnail,
       c.price,
-      COALESCE(r.avg_rating, 0) AS rating,
-      COALESCE(e.enrolled_students, 0) AS enrolledStudents
+      c.discount_price,
+      c.currency,
+      c.is_paid,
+      c.lifetime_access,
+      c.certificate_available,
+      c.instructor_id,
+      c.total_duration_minutes,
+      c.enrolled_students,
+      c.created_at,
+      c.updated_at
     FROM courses c
-    LEFT JOIN (
-      SELECT course_id, COUNT(*) AS enrolled_students
-      FROM enrollments
-      GROUP BY course_id
-    ) e ON e.course_id = c.id
-    LEFT JOIN (
-      SELECT course_id, ROUND(AVG(rating), 1) AS avg_rating
-      FROM ratings
-      GROUP BY course_id
-    ) r ON r.course_id = c.id
-    WHERE c.status = 'published'
     ORDER BY c.created_at DESC, c.id DESC
     LIMIT ? OFFSET ?`,
     [safeLimit, offset]
@@ -139,33 +200,24 @@ async function getPublishedCourseDetailBySlug(slug) {
       c.slug,
       c.title,
       c.subtitle,
-      c.description_short,
-      c.description_long,
+      c.description,
       c.category,
       c.level,
       c.language,
-      COALESCE(c.thumbnail_medium, c.thumbnail_large, c.thumbnail_small) AS thumbnail,
-      c.preview_video_url AS previewVideoUrl,
+      c.thumbnail,
       c.price,
-      c.is_paid AS isPaid,
-      c.instructor_id AS instructorId,
-      c.total_duration_minutes AS storedDuration,
-      c.total_lectures AS storedLectures,
-      COALESCE(r.avg_rating, 0) AS rating,
-      COALESCE(e.enrolled_students, 0) AS enrolledStudents
+      c.discount_price,
+      c.currency,
+      c.is_paid,
+      c.lifetime_access,
+      c.certificate_available,
+      c.instructor_id,
+      c.total_duration_minutes,
+      c.enrolled_students,
+      c.created_at,
+      c.updated_at
     FROM courses c
-    LEFT JOIN (
-      SELECT course_id, ROUND(AVG(rating), 1) AS avg_rating
-      FROM ratings
-      GROUP BY course_id
-    ) r ON r.course_id = c.id
-    LEFT JOIN (
-      SELECT course_id, COUNT(*) AS enrolled_students
-      FROM enrollments
-      GROUP BY course_id
-    ) e ON e.course_id = c.id
     WHERE c.slug = ?
-      AND c.status = 'published'
     LIMIT 1`,
     [safeSlug]
   );
@@ -175,187 +227,118 @@ async function getPublishedCourseDetailBySlug(slug) {
     return null;
   }
 
-  const [curriculumResult, requirementsResult, outcomesResult, instructorResult] = await Promise.all([
-    lmsDB.query(
-      `SELECT
-        s.id AS sectionId,
-        s.title AS sectionTitle,
-        s.\`order\` AS sectionOrder,
-        l.id AS lectureId,
-        l.title AS lectureTitle,
-        l.\`order\` AS lectureOrder,
-        l.duration_minutes AS durationMinutes,
-        l.video_url AS videoUrl,
-        l.is_preview AS isPreview,
-        lr.id AS resourceId,
-        lr.type AS resourceType,
-        lr.title AS resourceTitle,
-        lr.url AS resourceUrl
-      FROM sections s
-      LEFT JOIN lectures l ON l.section_id = s.id
-      LEFT JOIN lecture_resources lr ON lr.lecture_id = l.id
-      WHERE s.course_id = ?
-      ORDER BY
-        COALESCE(s.\`order\`, 2147483647), s.id,
-        COALESCE(l.\`order\`, 2147483647), l.id,
-        lr.id`,
-      [course.id]
-    ),
-    lmsDB.query('SELECT text FROM requirements WHERE course_id = ? ORDER BY id ASC', [course.id]),
-    lmsDB.query('SELECT text FROM learning_outcomes WHERE course_id = ? ORDER BY id ASC', [course.id]),
-    bsercDB.query('SELECT id, full_name FROM users WHERE id = ? LIMIT 1', [course.instructorId]),
-  ]);
-
-  const curriculumRows = curriculumResult[0];
-  const requirementRows = requirementsResult[0];
-  const outcomeRows = outcomesResult[0];
-  const instructorRows = instructorResult[0];
-
-  const sectionsMap = new Map();
-  const lecturesBySection = new Map();
-  const resourceIdsByLecture = new Map();
-
-  let totalLectures = 0;
-  let duration = 0;
-
-  for (const row of curriculumRows) {
-    if (!sectionsMap.has(row.sectionId)) {
-      sectionsMap.set(row.sectionId, {
-        id: row.sectionId,
-        title: row.sectionTitle,
-        order: row.sectionOrder === null ? null : Number(row.sectionOrder),
-        lectures: [],
-      });
-      lecturesBySection.set(row.sectionId, new Map());
-    }
-
-    if (!row.lectureId) {
-      continue;
-    }
-
-    const sectionLectures = lecturesBySection.get(row.sectionId);
-
-    if (!sectionLectures.has(row.lectureId)) {
-      const lecture = {
-        id: row.lectureId,
-        title: row.lectureTitle,
-        order: row.lectureOrder === null ? null : Number(row.lectureOrder),
-        durationMinutes: Number(row.durationMinutes || 0),
-        videoUrl: row.videoUrl,
-        isPreview: Boolean(row.isPreview),
-        resources: [],
-      };
-
-      sectionsMap.get(row.sectionId).lectures.push(lecture);
-      sectionLectures.set(row.lectureId, lecture);
-      resourceIdsByLecture.set(row.lectureId, new Set());
-
-      totalLectures += 1;
-      duration += Number(row.durationMinutes || 0);
-    }
-
-    if (row.resourceId) {
-      const seenResources = resourceIdsByLecture.get(row.lectureId);
-      if (!seenResources.has(row.resourceId)) {
-        sectionLectures.get(row.lectureId).resources.push({
-          id: row.resourceId,
-          type: row.resourceType,
-          title: row.resourceTitle,
-          url: row.resourceUrl,
-        });
-        seenResources.add(row.resourceId);
-      }
+  let instructor = null;
+  if (course.instructor_id) {
+    try {
+      const [instructorRows] = await bsercDB.query(
+        'SELECT id, full_name FROM users WHERE id = ? LIMIT 1',
+        [course.instructor_id]
+      );
+      instructor = instructorRows[0] || null;
+    } catch (err) {
+      // Allow course detail response even if user table is unavailable.
+      instructor = null;
     }
   }
-
-  const instructor = instructorRows[0] || null;
-  const computedDuration = duration > 0 ? duration : Number(course.storedDuration || 0);
-  const computedLectureCount = totalLectures > 0 ? totalLectures : Number(course.storedLectures || 0);
 
   return {
     id: course.id,
     slug: course.slug,
     title: course.title,
     subtitle: course.subtitle,
-    description: {
-      short: course.description_short,
-      long: course.description_long,
-    },
+    description: course.description,
     category: course.category,
     level: course.level,
     language: course.language,
     thumbnail: course.thumbnail,
-    previewVideoUrl: course.previewVideoUrl,
     price: course.price === null ? 0 : Number(course.price),
-    isPaid: Boolean(course.isPaid),
-    rating: Number(course.rating || 0),
-    enrolledStudents: Number(course.enrolledStudents || 0),
-    duration: computedDuration,
-    totalLectures: computedLectureCount,
-    requirements: requirementRows.map((item) => item.text).filter((item) => item),
-    learningOutcomes: outcomeRows.map((item) => item.text).filter((item) => item),
+    discount_price: course.discount_price === null ? null : Number(course.discount_price),
+    currency: course.currency,
+    is_paid: Boolean(course.is_paid),
+    lifetime_access: Boolean(course.lifetime_access),
+    certificate_available: Boolean(course.certificate_available),
+    instructor_id: course.instructor_id,
+    total_duration_minutes: Number(course.total_duration_minutes || 0),
+    enrolled_students: Number(course.enrolled_students || 0),
+    created_at: course.created_at,
+    updated_at: course.updated_at,
+    // Compatibility fields consumed by existing frontend code.
+    discountPrice: course.discount_price === null ? null : Number(course.discount_price),
+    isPaid: Boolean(course.is_paid),
+    lifetimeAccess: Boolean(course.lifetime_access),
+    certificateAvailable: Boolean(course.certificate_available),
+    instructorId: course.instructor_id,
+    totalDurationMinutes: Number(course.total_duration_minutes || 0),
+    enrolledStudents: Number(course.enrolled_students || 0),
+    rating: 0,
     instructor: {
-      id: instructor?.id || course.instructorId,
+      id: instructor?.id || course.instructor_id,
       name: instructor?.full_name || null,
       avatar: null,
     },
-    curriculum: Array.from(sectionsMap.values()),
+    curriculum: [],
   };
 }
 
 async function createCourse(payload, authUser) {
   const title = cleanText(payload.title);
-  const slug = cleanText(payload.slug);
-
-  if (!title || !slug) {
-    return { status: 400, body: { message: 'title and slug are required' } };
+  if (!title) {
+    return { status: 400, body: { message: 'title is required' } };
   }
 
   const subtitle = nullableText(payload.subtitle);
-  const descriptionShort = nullableText(payload.description?.short ?? payload.description_short);
-  const descriptionLong = nullableText(payload.description?.long ?? payload.description_long);
+  const description = nullableText(payload.description);
   const category = nullableText(payload.category);
+  if (!category) {
+    return { status: 400, body: { message: 'category is required' } };
+  }
 
   const level = nullableText(payload.level);
+  if (!level) {
+    return { status: 400, body: { message: 'level is required' } };
+  }
+
   if (level && !ALLOWED_LEVELS.has(level)) {
     return { status: 400, body: { message: 'Invalid level value' } };
   }
 
   const language = nullableText(payload.language);
   const thumbnail = nullableText(payload.thumbnail);
-  const thumbnailSmall = nullableText(payload.thumbnail_small) || thumbnail;
-  const thumbnailMedium = nullableText(payload.thumbnail_medium) || thumbnail || thumbnailSmall;
-  const thumbnailLarge = nullableText(payload.thumbnail_large) || thumbnail || thumbnailMedium || thumbnailSmall;
-  const previewVideoUrl = nullableText(payload.previewVideoUrl ?? payload.preview_video_url);
 
-  const isPaid = toBoolean(payload.isPaid ?? payload.is_paid, true) ? 1 : 0;
   const rawPrice = toNullableNumber(payload.price);
+  if (rawPrice !== null && rawPrice < 0) {
+    return { status: 400, body: { message: 'price must be greater than or equal to 0' } };
+  }
+
+  const isPaid = toBoolean(payload.isPaid ?? payload.is_paid, rawPrice !== null && rawPrice > 0) ? 1 : 0;
 
   if (isPaid === 1 && rawPrice === null) {
     return { status: 400, body: { message: 'price is required for paid courses' } };
   }
 
-  const price = rawPrice === null ? 0 : rawPrice;
+  const price = isPaid === 1 ? (rawPrice === null ? 0 : rawPrice) : 0;
   const discountPrice = toNullableNumber(payload.discountPrice ?? payload.discount_price);
+  if (discountPrice !== null && discountPrice < 0) {
+    return { status: 400, body: { message: 'discount_price must be greater than or equal to 0' } };
+  }
+
+  if (discountPrice !== null && discountPrice > price) {
+    return { status: 400, body: { message: 'discount_price cannot be greater than price' } };
+  }
+
   const currency = nullableText(payload.currency) || 'INR';
 
   const lifetimeAccess = toBoolean(payload.lifetimeAccess ?? payload.lifetime_access, true) ? 1 : 0;
   const certificateAvailable = toBoolean(payload.certificateAvailable ?? payload.certificate_available, true) ? 1 : 0;
-
-  const status = nullableText(payload.status) || 'draft';
-  if (!ALLOWED_STATUSES.has(status)) {
-    return { status: 400, body: { message: 'Invalid status value' } };
-  }
-
-  const visibility = nullableText(payload.visibility) || 'public';
-  if (!ALLOWED_VISIBILITY.has(visibility)) {
-    return { status: 400, body: { message: 'Invalid visibility value' } };
-  }
-
-  const programId = toNullableInt(payload.programId ?? payload.program_id);
+  const totalDurationMinutes = Math.max(0, toNullableInt(payload.totalDurationMinutes ?? payload.total_duration_minutes) || 0);
+  const enrolledStudents = 0;
 
   let instructorId = toNullableInt(payload.instructorId ?? payload.instructor_id);
-  if (!instructorId || authUser?.role === 'instructor') {
+  if (!instructorId) {
+    instructorId = toNullableInt(authUser?.userId);
+  }
+
+  if (!instructorId && authUser?.role === 'instructor') {
     instructorId = toNullableInt(authUser?.userId);
   }
 
@@ -363,81 +346,98 @@ async function createCourse(payload, authUser) {
     return { status: 400, body: { message: 'Valid instructor_id is required' } };
   }
 
-  const [instructorRows] = await bsercDB.query('SELECT id FROM users WHERE id = ? LIMIT 1', [instructorId]);
-  if (!instructorRows[0]) {
-    return { status: 404, body: { message: 'Instructor not found' } };
+  try {
+    const [instructorRows] = await bsercDB.query('SELECT id FROM users WHERE id = ? LIMIT 1', [instructorId]);
+    if (!instructorRows[0]) {
+      return { status: 404, body: { message: 'Instructor not found' } };
+    }
+  } catch (err) {
+    // If users table is unavailable in current environment, skip strict check.
+    if (err.code !== 'ER_NO_SUCH_TABLE' && err.code !== 'ER_BAD_DB_ERROR') {
+      throw err;
+    }
   }
 
-  try {
-    const [result] = await lmsDB.query(
-      `INSERT INTO courses (
-        title,
-        slug,
-        subtitle,
-        description_short,
-        description_long,
-        category,
-        level,
-        language,
-        thumbnail_small,
-        thumbnail_medium,
-        thumbnail_large,
-        preview_video_url,
-        price,
-        discount_price,
-        currency,
-        is_paid,
-        lifetime_access,
-        certificate_available,
-        status,
-        visibility,
-        instructor_id,
-        program_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
-      [
-        title,
-        slug,
-        subtitle,
-        descriptionShort,
-        descriptionLong,
-        category,
-        level,
-        language,
-        thumbnailSmall,
-        thumbnailMedium,
-        thumbnailLarge,
-        previewVideoUrl,
-        price,
-        discountPrice,
-        currency,
-        isPaid,
-        lifetimeAccess,
-        certificateAvailable,
-        status,
-        visibility,
-        instructorId,
-        programId,
-      ]
-    );
+  let slug = await ensureUniqueSlug(payload.slug, title);
 
-    return {
-      status: 201,
-      body: {
-        message: 'Course created successfully',
-        course: {
-          id: result.insertId,
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const [result] = await lmsDB.query(
+        `INSERT INTO courses (
           title,
           slug,
-          status,
-          instructor_id: instructorId,
+          subtitle,
+          description,
+          category,
+          level,
+          language,
+          thumbnail,
+          price,
+          discount_price,
+          currency,
+          is_paid,
+          lifetime_access,
+          certificate_available,
+          instructor_id,
+          total_duration_minutes,
+          enrolled_students,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [
+          title,
+          slug,
+          subtitle,
+          description,
+          category,
+          level,
+          language,
+          thumbnail,
+          price,
+          discountPrice,
+          currency,
+          isPaid,
+          lifetimeAccess,
+          certificateAvailable,
+          instructorId,
+          totalDurationMinutes,
+          enrolledStudents,
+        ]
+      );
+
+      return {
+        status: 201,
+        body: {
+          message: 'Course created successfully',
+          course: {
+            id: result.insertId,
+            title,
+            slug,
+            subtitle,
+            description,
+            category,
+            level,
+            language,
+            thumbnail,
+            price,
+            discount_price: discountPrice,
+            currency,
+            is_paid: Boolean(isPaid),
+            lifetime_access: Boolean(lifetimeAccess),
+            certificate_available: Boolean(certificateAvailable),
+            instructor_id: instructorId,
+            total_duration_minutes: totalDurationMinutes,
+            enrolled_students: enrolledStudents,
+          },
         },
-      },
-    };
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') {
-      return { status: 409, body: { message: 'slug already exists' } };
+      };
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY' && attempt === 0) {
+        slug = await ensureUniqueSlug(`${slug}-${generateSlugSuffix()}`, title);
+        continue;
+      }
+      throw err;
     }
-    throw err;
   }
 }
 

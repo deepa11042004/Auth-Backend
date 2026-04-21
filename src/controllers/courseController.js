@@ -41,8 +41,26 @@ async function createCourse(req, res, next) {
   }
 }
 
+async function createAdminCourse(req, res, next) {
+  try {
+    const payload = {
+      ...(req.body || {}),
+    };
+
+    if (req.file?.filename) {
+      payload.thumbnail = `/uploads/courses/${req.file.filename}`;
+    }
+
+    const result = await courseService.createCourse(payload, req.user || {});
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   getPublishedCourses,
   getCourseBySlug,
   createCourse,
+  createAdminCourse,
 };
