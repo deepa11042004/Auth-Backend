@@ -76,6 +76,10 @@ function isFailedPaymentStatus(status) {
   return Boolean(status) && FAILED_PAYMENT_STATUSES.has(status);
 }
 
+function isTransientPaymentStatus(status) {
+  return Boolean(status) && TRANSIENT_PAYMENT_STATUSES.has(status);
+}
+
 function toMoneyInPaise(value) {
   if (value === null || value === undefined || value === '') {
     return 0;
@@ -584,6 +588,8 @@ async function registerInternshipInternal(input, paymentInfo, options = {}) {
 
     await connection.commit();
 
+    const attemptPaymentStatus = normalizedPaymentStatus || 'failed';
+
     return {
       status: 201,
       body: {
@@ -591,7 +597,7 @@ async function registerInternshipInternal(input, paymentInfo, options = {}) {
           ? (reusedFailedAttempt
             ? 'Internship application submitted successfully after retry'
             : 'Internship application submitted successfully')
-          : 'Internship application attempt saved with failed payment status',
+          : `Internship application attempt saved with payment status: ${attemptPaymentStatus}`,
       },
     };
   } catch (err) {
@@ -863,6 +869,8 @@ async function registerWithoutPayment(input) {
   const amountInPaise = toMoneyInPaise(internshipFeeRupees);
   const paymentStatus = normalizePaymentStatus(input?.payment_status);
   const isFailedAttempt = isFailedPaymentStatus(paymentStatus);
+  const isTransientAttempt = isTransientPaymentStatus(paymentStatus);
+  const isPaymentAttempt = isFailedAttempt || isTransientAttempt;
   let effectiveFailedAttempt = isFailedAttempt;
 
   if (amountInPaise === null) {
@@ -872,7 +880,7 @@ async function registerWithoutPayment(input) {
     };
   }
 
-  if (amountInPaise > 0 && !isFailedAttempt) {
+  if (amountInPaise > 0 && !isPaymentAttempt) {
     return {
       status: 400,
       body: { message: 'Payment is required before internship application submission' },
@@ -961,12 +969,24 @@ async function registerWithoutPayment(input) {
         payment_status: paymentStatus || 'failed',
       };
     }
+  } else if (isTransientAttempt) {
+    paymentInfo = {
+      payment_amount: amountInPaise / 100,
+      payment_currency: PAYMENT_CURRENCY,
+      razorpay_order_id: providedOrderId,
+      razorpay_payment_id: providedPaymentId,
+      payment_status: paymentStatus || 'pending',
+    };
   }
+
+  const shouldCreateUser = isCompletedRegistrationStatus(
+    normalizePaymentStatus(paymentInfo.payment_status)
+  );
 
   return registerInternshipInternal(
     input,
     paymentInfo,
-    { requirePhoto: true, createUser: !effectiveFailedAttempt }
+    { requirePhoto: true, createUser: shouldCreateUser && !effectiveFailedAttempt }
   );
 }
 
