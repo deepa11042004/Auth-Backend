@@ -119,6 +119,9 @@ function normalizeInstitutionalRegistrationPayload(input = {}) {
     payment_currency: toNullableText(
       input.payment_currency || input.paymentCurrency
     ),
+    razorpay_order_id: toNullableText(
+      input.razorpay_order_id || input.order_id || input.orderId
+    ),
     transaction_id: toNullableText(
       input.transaction_id || input.transactionId || input.razorpay_payment_id
     ),
@@ -209,6 +212,10 @@ function normalizeInstitutionalRegistrationPayload(input = {}) {
     errors.push('payment_currency cannot exceed 10 characters');
   }
 
+  if (payload.razorpay_order_id && payload.razorpay_order_id.length > 120) {
+    errors.push('razorpay_order_id cannot exceed 120 characters');
+  }
+
   if (payload.transaction_id && payload.transaction_id.length > 120) {
     errors.push('transaction_id cannot exceed 120 characters');
   }
@@ -238,6 +245,7 @@ async function ensureInstitutionalRegistrationTable(connection = db) {
       payment_status ENUM('success', 'failed', 'pending') NOT NULL DEFAULT 'pending',
       payment_amount DECIMAL(10,2) NULL,
       payment_currency VARCHAR(10) NULL,
+      razorpay_order_id VARCHAR(120) NULL,
       transaction_id VARCHAR(120) NULL,
       failure_reason TEXT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -316,6 +324,17 @@ async function ensureInstitutionalRegistrationTable(connection = db) {
     );
   }
 
+  const [razorpayOrderIdColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${INSTITUTIONAL_REGISTRATION_TABLE} LIKE 'razorpay_order_id'`
+  );
+
+  if (razorpayOrderIdColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${INSTITUTIONAL_REGISTRATION_TABLE}
+       ADD COLUMN razorpay_order_id VARCHAR(120) NULL AFTER payment_currency`
+    );
+  }
+
   const [transactionIdColumn] = await connection.query(
     `SHOW COLUMNS FROM ${INSTITUTIONAL_REGISTRATION_TABLE} LIKE 'transaction_id'`
   );
@@ -363,6 +382,7 @@ function mapInstitutionalRegistrationRow(row) {
         ? null
         : Number(row.payment_amount),
     payment_currency: cleanText(row.payment_currency) || null,
+    razorpay_order_id: cleanText(row.razorpay_order_id) || null,
     transaction_id: cleanText(row.transaction_id) || null,
     failure_reason: cleanText(row.failure_reason) || null,
     created_at: formatDateTime(row.created_at),
@@ -390,6 +410,7 @@ async function createInstitutionalRegistration(payload, connection = db) {
     'payment_status',
     'payment_amount',
     'payment_currency',
+    'razorpay_order_id',
     'transaction_id',
     'failure_reason',
   ];
@@ -413,6 +434,7 @@ async function createInstitutionalRegistration(payload, connection = db) {
     payload.payment_status,
     payload.payment_amount,
     payload.payment_currency,
+    payload.razorpay_order_id,
     payload.transaction_id,
     payload.failure_reason,
   ];

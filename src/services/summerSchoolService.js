@@ -23,6 +23,7 @@ const SUMMER_SCHOOL_PAYMENT_CURRENCIES = Object.freeze({
 });
 
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
+const COMPLETED_PAYMENT_STATUSES = new Set(['captured', 'authorized', 'not_required']);
 const TRANSIENT_PAYMENT_STATUSES = new Set(['created', 'pending']);
 const PAYMENT_FETCH_RETRY_ATTEMPTS = 6;
 const PAYMENT_FETCH_RETRY_DELAY_MS = 1200;
@@ -93,6 +94,14 @@ function normalizeCategory(value) {
 function normalizePaymentAttemptStatus(value) {
   const normalized = cleanText(value).toLowerCase();
 
+  if (
+    normalized === 'pending'
+    || normalized === 'created'
+    || normalized === 'order_created'
+  ) {
+    return 'pending';
+  }
+
   if (normalized === 'failed' || normalized === 'payment_failed') {
     return PAYMENT_STATUS_FAILED;
   }
@@ -107,6 +116,174 @@ function normalizePaymentAttemptStatus(value) {
   }
 
   return '';
+}
+
+function normalizeStoredPaymentStatus(value) {
+  const normalized = cleanText(value).toLowerCase();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized === 'cancelled' || normalized === 'canceled') {
+    return PAYMENT_STATUS_FAILED;
+  }
+
+  if (normalized === 'success') {
+    return 'captured';
+  }
+
+  return normalized;
+}
+
+function isCompletedPaymentStatus(value) {
+  const normalized = normalizeStoredPaymentStatus(value);
+  return COMPLETED_PAYMENT_STATUSES.has(normalized);
+}
+
+async function findLatestOpenStudentAttempt(connection, email, orderId) {
+  if (orderId) {
+    const [rows] = await connection.query(
+      `SELECT id, payment_status
+       FROM ${StudentRegistration.STUDENT_REGISTRATION_TABLE}
+       WHERE LOWER(email) = LOWER(?)
+         AND razorpay_order_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [email, orderId]
+    );
+
+    const row = rows[0] || null;
+    if (row && !isCompletedPaymentStatus(row.payment_status)) {
+      return row;
+    }
+  }
+
+  const [rows] = await connection.query(
+    `SELECT id, payment_status
+     FROM ${StudentRegistration.STUDENT_REGISTRATION_TABLE}
+     WHERE LOWER(email) = LOWER(?)
+       AND (
+         payment_status IS NULL
+         OR LOWER(payment_status) NOT IN ('captured', 'authorized', 'not_required')
+       )
+     ORDER BY id DESC
+     LIMIT 1`,
+    [email]
+  );
+
+  const row = rows[0] || null;
+  if (!row) {
+    return null;
+  }
+
+  return isCompletedPaymentStatus(row.payment_status) ? null : row;
+}
+
+async function upsertStudentPaymentAttempt(normalizedPayload, paymentDetails) {
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const orderId = cleanText(paymentDetails?.razorpay_order_id);
+    const existingAttempt = await findLatestOpenStudentAttempt(
+      connection,
+      normalizedPayload.email,
+      orderId
+    );
+
+    if (existingAttempt) {
+      await connection.query(
+        `UPDATE ${StudentRegistration.STUDENT_REGISTRATION_TABLE}
+         SET full_name = ?,
+             dob = ?,
+             category = ?,
+             alternative_email = ?,
+             grade = ?,
+             school = ?,
+             board = ?,
+             nationality = ?,
+             gender = ?,
+             guardian_name = ?,
+             relationship = ?,
+             guardian_email = ?,
+             guardian_phone = ?,
+             alt_phone = ?,
+             batch = ?,
+             experience = ?,
+             guidelines_accepted = ?,
+             conduct_accepted = ?,
+             payment_amount = ?,
+             payment_currency = ?,
+             razorpay_order_id = ?,
+             razorpay_payment_id = ?,
+             payment_status = ?,
+             payment_mode = ?
+         WHERE id = ?
+         LIMIT 1`,
+        [
+          normalizedPayload.full_name,
+          normalizedPayload.dob,
+          normalizedPayload.category,
+          normalizedPayload.alternative_email,
+          normalizedPayload.grade,
+          normalizedPayload.school,
+          normalizedPayload.board,
+          normalizedPayload.nationality,
+          normalizedPayload.gender,
+          normalizedPayload.guardian_name,
+          normalizedPayload.relationship,
+          normalizedPayload.guardian_email,
+          normalizedPayload.guardian_phone,
+          normalizedPayload.alt_phone,
+          normalizedPayload.batch,
+          normalizedPayload.experience,
+          normalizedPayload.guidelines_accepted,
+          normalizedPayload.conduct_accepted,
+          paymentDetails?.payment_amount ?? null,
+          paymentDetails?.payment_currency || null,
+          paymentDetails?.razorpay_order_id || null,
+          paymentDetails?.razorpay_payment_id || null,
+          paymentDetails?.payment_status || null,
+          paymentDetails?.payment_mode || null,
+          Number(existingAttempt.id),
+        ]
+      );
+
+      const [updatedRows] = await connection.query(
+        `SELECT *
+         FROM ${StudentRegistration.STUDENT_REGISTRATION_TABLE}
+         WHERE id = ?
+         LIMIT 1`,
+        [Number(existingAttempt.id)]
+      );
+
+      await connection.commit();
+      return updatedRows[0] || null;
+    }
+
+    const created = await StudentRegistration.createStudentRegistration(
+      {
+        ...normalizedPayload,
+        payment_amount: paymentDetails?.payment_amount ?? null,
+        payment_currency: paymentDetails?.payment_currency || null,
+        razorpay_order_id: paymentDetails?.razorpay_order_id || null,
+        razorpay_payment_id: paymentDetails?.razorpay_payment_id || null,
+        payment_status: paymentDetails?.payment_status || null,
+        payment_mode: paymentDetails?.payment_mode || null,
+      },
+      connection
+    );
+
+    await connection.commit();
+    return created;
+  } catch (err) {
+    await connection.rollback();
+    throw err;
+  } finally {
+    connection.release();
+  }
 }
 
 function toFeeAmount(value, fallback) {
@@ -452,7 +629,7 @@ async function logPaymentAttempt(payload) {
       status: 400,
       body: {
         success: false,
-        message: 'payment_status must be failed or cancelled/dismissed',
+        message: 'payment_status must be failed, cancelled/dismissed, or pending/created',
       },
     };
   }
@@ -473,7 +650,7 @@ async function logPaymentAttempt(payload) {
 
   let upgradedSuccessfulPayment = null;
 
-  if (providedOrderId) {
+  if (paymentStatus === PAYMENT_STATUS_FAILED && providedOrderId) {
     const razorpayClient = getRazorpayClient();
 
     if (razorpayClient) {
@@ -536,8 +713,7 @@ async function logPaymentAttempt(payload) {
     const reconciledStatus = cleanText(upgradedSuccessfulPayment.status).toLowerCase();
     const reconciledMethod = cleanText(upgradedSuccessfulPayment.method);
 
-    const reconciledRegistration = await StudentRegistration.createStudentRegistration({
-      ...normalizedPayload,
+    const reconciledRegistration = await upsertStudentPaymentAttempt(normalizedPayload, {
       payment_amount:
         Number.isFinite(reconciledAmountMinorUnits) && reconciledAmountMinorUnits >= 0
           ? reconciledAmountMinorUnits / 100
@@ -576,21 +752,27 @@ async function logPaymentAttempt(payload) {
     };
   }
 
-  const registration = await StudentRegistration.createStudentRegistration({
-    ...normalizedPayload,
+  const normalizedAttemptStatus = paymentStatus === 'pending' ? 'pending' : PAYMENT_STATUS_FAILED;
+
+  const registration = await upsertStudentPaymentAttempt(normalizedPayload, {
     payment_amount: paymentConfig.amount,
     payment_currency: paymentConfig.currency,
     razorpay_order_id: providedOrderId,
     razorpay_payment_id: providedPaymentId,
-    payment_status: paymentStatus,
-    payment_mode: cleanText(payload?.payment_mode) || 'gateway_failed',
+    payment_status: normalizedAttemptStatus,
+    payment_mode:
+      cleanText(payload?.payment_mode)
+      || (normalizedAttemptStatus === 'pending' ? 'order_created' : 'gateway_failed'),
   });
 
   return {
     status: 201,
     body: {
       success: true,
-      message: 'Failed payment attempt stored successfully',
+      message:
+        normalizedAttemptStatus === 'pending'
+          ? 'Payment attempt saved with pending status'
+          : 'Failed payment attempt stored successfully',
       data: registration,
     },
   };
@@ -879,8 +1061,7 @@ async function verifyPaymentAndRegister(payload) {
     };
   }
 
-  const registration = await StudentRegistration.createStudentRegistration({
-    ...normalizedPayload,
+  const registration = await upsertStudentPaymentAttempt(normalizedPayload, {
     payment_amount: Number(payment.amount) / 100,
     payment_currency: paymentCurrency,
     razorpay_order_id: orderId,

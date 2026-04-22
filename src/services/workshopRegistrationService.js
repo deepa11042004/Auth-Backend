@@ -1075,6 +1075,8 @@ async function registerForWorkshop(input) {
 
     await connection.commit();
 
+    const attemptPaymentStatus = resolvedPaymentStatus || 'failed';
+
     return {
       status: 201,
       body: {
@@ -1082,7 +1084,7 @@ async function registerForWorkshop(input) {
           ? (reusedFailedAttempt
             ? 'Workshop registration completed successfully'
             : 'Workshop registration successful')
-          : 'Workshop registration attempt saved with failed payment status',
+          : `Workshop registration attempt saved with payment status: ${attemptPaymentStatus}`,
         registration: {
           workshop_id: workshopId,
           email,

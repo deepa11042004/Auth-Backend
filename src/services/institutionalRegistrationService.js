@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const Razorpay = require('razorpay');
 
+const db = require('../config/db');
 const InstitutionalRegistration = require('../models/InstitutionalRegistration');
 
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
@@ -142,6 +143,242 @@ async function fetchPaymentFromRazorpayWithRetry(razorpayClient, paymentId) {
   }
 
   return { payment: latestPayment, fetchError: lastError };
+}
+
+function normalizeInstitutionalAttemptStatus(value) {
+  const normalized = cleanText(value).toLowerCase();
+
+  if (
+    normalized === 'pending'
+    || normalized === 'created'
+    || normalized === 'order_created'
+  ) {
+    return 'pending';
+  }
+
+  if (
+    normalized === 'failed'
+    || normalized === 'failure'
+    || normalized === 'cancelled'
+    || normalized === 'canceled'
+    || normalized === 'payment_failed'
+    || normalized === 'payment_cancelled'
+    || normalized === 'dismissed'
+  ) {
+    return 'failed';
+  }
+
+  return '';
+}
+
+function normalizeInstitutionalStoredPaymentStatus(value) {
+  const normalized = cleanText(value).toLowerCase();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized === 'captured' || normalized === 'authorized' || normalized === 'success') {
+    return 'success';
+  }
+
+  if (
+    normalized === 'failed'
+    || normalized === 'failure'
+    || normalized === 'cancelled'
+    || normalized === 'canceled'
+  ) {
+    return 'failed';
+  }
+
+  if (normalized === 'pending' || normalized === 'created') {
+    return 'pending';
+  }
+
+  return normalized;
+}
+
+function isCompletedInstitutionalPaymentStatus(value) {
+  return normalizeInstitutionalStoredPaymentStatus(value) === 'success';
+}
+
+async function resolvePaymentFromOrderContext(razorpayClient, orderId, paymentId) {
+  const { payment, fetchError } = await fetchPaymentFromRazorpayWithRetry(
+    razorpayClient,
+    paymentId
+  );
+
+  if (payment && String(payment.order_id) === orderId) {
+    return { payment, fetchError: null };
+  }
+
+  let lastError = fetchError;
+
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+    const matchingPayment = items.find((item) => cleanText(item?.id) === paymentId);
+
+    if (matchingPayment) {
+      return { payment: matchingPayment, fetchError: null };
+    }
+  } catch (err) {
+    lastError = err;
+  }
+
+  return { payment, fetchError: lastError };
+}
+
+async function resolveSuccessfulOrderPayment(razorpayClient, orderId) {
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+
+    const successfulPayment = items.find((item) =>
+      SUCCESSFUL_PAYMENT_STATUSES.has(cleanText(item?.status).toLowerCase())
+    );
+
+    return successfulPayment || null;
+  } catch {
+    return null;
+  }
+}
+
+async function findLatestOpenInstitutionalAttempt(connection, normalizedPayload, orderId) {
+  if (orderId) {
+    const [rows] = await connection.query(
+      `SELECT id, payment_status
+       FROM ${InstitutionalRegistration.INSTITUTIONAL_REGISTRATION_TABLE}
+       WHERE LOWER(email) = LOWER(?)
+         AND razorpay_order_id = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [normalizedPayload.email, orderId]
+    );
+
+    const row = rows[0] || null;
+    if (row && !isCompletedInstitutionalPaymentStatus(row.payment_status)) {
+      return row;
+    }
+  }
+
+  const [rows] = await connection.query(
+    `SELECT id, payment_status
+     FROM ${InstitutionalRegistration.INSTITUTIONAL_REGISTRATION_TABLE}
+     WHERE LOWER(email) = LOWER(?)
+       AND LOWER(institute_name) = LOWER(?)
+       AND LOWER(head_email) = LOWER(?)
+       AND LOWER(payment_status) IN ('pending', 'failed')
+     ORDER BY id DESC
+     LIMIT 1`,
+    [
+      normalizedPayload.email,
+      normalizedPayload.institute_name,
+      normalizedPayload.head_email,
+    ]
+  );
+
+  return rows[0] || null;
+}
+
+async function upsertInstitutionalAttempt(normalizedPayload, paymentDetails) {
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const orderId = cleanText(paymentDetails?.razorpay_order_id);
+    const existingAttempt = await findLatestOpenInstitutionalAttempt(
+      connection,
+      normalizedPayload,
+      orderId
+    );
+
+    if (existingAttempt && !isCompletedInstitutionalPaymentStatus(existingAttempt.payment_status)) {
+      await connection.query(
+        `UPDATE ${InstitutionalRegistration.INSTITUTIONAL_REGISTRATION_TABLE}
+         SET institute_name = ?,
+             board = ?,
+             city = ?,
+             state = ?,
+             pin_code = ?,
+             country = ?,
+             contact_name = ?,
+             designation = ?,
+             email = ?,
+             phone = ?,
+             student_count = ?,
+             head_name = ?,
+             head_email = ?,
+             head_phone = ?,
+             message = ?,
+             payment_status = ?,
+             payment_amount = ?,
+             payment_currency = ?,
+             razorpay_order_id = ?,
+             transaction_id = ?,
+             failure_reason = ?
+         WHERE id = ?
+         LIMIT 1`,
+        [
+          normalizedPayload.institute_name,
+          normalizedPayload.board,
+          normalizedPayload.city,
+          normalizedPayload.state,
+          normalizedPayload.pin_code,
+          normalizedPayload.country,
+          normalizedPayload.contact_name,
+          normalizedPayload.designation,
+          normalizedPayload.email,
+          normalizedPayload.phone,
+          normalizedPayload.student_count,
+          normalizedPayload.head_name,
+          normalizedPayload.head_email,
+          normalizedPayload.head_phone,
+          normalizedPayload.message,
+          paymentDetails?.payment_status || 'pending',
+          paymentDetails?.payment_amount ?? null,
+          paymentDetails?.payment_currency || null,
+          paymentDetails?.razorpay_order_id || null,
+          paymentDetails?.transaction_id || null,
+          paymentDetails?.failure_reason || null,
+          Number(existingAttempt.id),
+        ]
+      );
+
+      const [updatedRows] = await connection.query(
+        `SELECT *
+         FROM ${InstitutionalRegistration.INSTITUTIONAL_REGISTRATION_TABLE}
+         WHERE id = ?
+         LIMIT 1`,
+        [Number(existingAttempt.id)]
+      );
+
+      await connection.commit();
+      return updatedRows[0] || null;
+    }
+
+    const created = await InstitutionalRegistration.createInstitutionalRegistration(
+      {
+        ...normalizedPayload,
+        payment_status: paymentDetails?.payment_status || 'pending',
+        payment_amount: paymentDetails?.payment_amount ?? null,
+        payment_currency: paymentDetails?.payment_currency || null,
+        razorpay_order_id: paymentDetails?.razorpay_order_id || null,
+        transaction_id: paymentDetails?.transaction_id || null,
+        failure_reason: paymentDetails?.failure_reason || null,
+      },
+      connection
+    );
+
+    await connection.commit();
+    return created;
+  } catch (err) {
+    await connection.rollback();
+    throw err;
+  } finally {
+    connection.release();
+  }
 }
 
 function buildValidationError(errors) {
@@ -408,11 +645,11 @@ async function verifyPaymentAndRegister(payload) {
     };
   }
 
-  const registration = await InstitutionalRegistration.createInstitutionalRegistration({
-    ...normalizedPayload,
+  const registration = await upsertInstitutionalAttempt(normalizedPayload, {
     payment_status: 'success',
     payment_amount: expectedAmountInMinorUnits / 100,
     payment_currency: paymentConfig.currency,
+    razorpay_order_id: orderId,
     transaction_id: paymentId,
     failure_reason: null,
   });
@@ -457,6 +694,20 @@ async function logPaymentAttempt(payload) {
     };
   }
 
+  const attemptStatus = normalizeInstitutionalAttemptStatus(
+    payload?.payment_status || payload?.status || normalizedPayload.payment_status
+  );
+
+  if (!attemptStatus) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'payment_status must be failed/cancelled or pending/created',
+      },
+    };
+  }
+
   const failureReason = cleanText(
     payload?.failure_reason
     || payload?.failureReason
@@ -473,20 +724,96 @@ async function logPaymentAttempt(payload) {
     || payload?.payment_id
   ) || null;
 
-  const registration = await InstitutionalRegistration.createInstitutionalRegistration({
-    ...normalizedPayload,
-    payment_status: 'failed',
-    payment_amount: paymentConfig.amount,
-    payment_currency: paymentConfig.currency,
-    transaction_id: transactionId,
-    failure_reason: failureReason || null,
+  const orderId = cleanText(
+    payload?.razorpay_order_id || payload?.order_id || payload?.orderId
+  ) || null;
+
+  let resolvedPaymentStatus = attemptStatus;
+  let resolvedPaymentAmount = paymentConfig.amount;
+  let resolvedPaymentCurrency = paymentConfig.currency;
+  let resolvedTransactionId = transactionId;
+  let resolvedFailureReason = attemptStatus === 'failed'
+    ? (failureReason || 'Payment failed or cancelled by user')
+    : null;
+
+  if (attemptStatus === 'failed' && orderId) {
+    const razorpayClient = getRazorpayClient();
+
+    if (razorpayClient) {
+      let upgradedSuccessfulPayment = null;
+
+      if (transactionId) {
+        try {
+          const resolved = await resolvePaymentFromOrderContext(
+            razorpayClient,
+            orderId,
+            transactionId
+          );
+
+          const resolvedStatus = cleanText(resolved.payment?.status).toLowerCase();
+
+          if (
+            resolved.payment
+            && String(resolved.payment.order_id) === orderId
+            && SUCCESSFUL_PAYMENT_STATUSES.has(resolvedStatus)
+          ) {
+            upgradedSuccessfulPayment = resolved.payment;
+          }
+        } catch {
+          // Keep failed-attempt fallback when reconciliation lookup fails.
+        }
+      }
+
+      if (!upgradedSuccessfulPayment) {
+        const resolvedFromOrder = await resolveSuccessfulOrderPayment(
+          razorpayClient,
+          orderId
+        );
+
+        if (
+          resolvedFromOrder
+          && String(resolvedFromOrder.order_id) === orderId
+        ) {
+          upgradedSuccessfulPayment = resolvedFromOrder;
+        }
+      }
+
+      if (upgradedSuccessfulPayment) {
+        const upgradedAmountMinorUnits = Number(upgradedSuccessfulPayment.amount);
+        const upgradedCurrency = cleanText(upgradedSuccessfulPayment.currency).toUpperCase();
+        const upgradedPaymentId = cleanText(upgradedSuccessfulPayment.id);
+
+        resolvedPaymentStatus = 'success';
+        resolvedPaymentAmount =
+          Number.isFinite(upgradedAmountMinorUnits) && upgradedAmountMinorUnits >= 0
+            ? upgradedAmountMinorUnits / 100
+            : paymentConfig.amount;
+        resolvedPaymentCurrency = upgradedCurrency || paymentConfig.currency;
+        resolvedTransactionId = upgradedPaymentId || transactionId;
+        resolvedFailureReason = null;
+      }
+    }
+  }
+
+  const registration = await upsertInstitutionalAttempt(normalizedPayload, {
+    payment_status: resolvedPaymentStatus,
+    payment_amount: resolvedPaymentAmount,
+    payment_currency: resolvedPaymentCurrency,
+    razorpay_order_id: orderId,
+    transaction_id: resolvedTransactionId,
+    failure_reason: resolvedFailureReason,
   });
 
   return {
     status: 201,
     body: {
       success: true,
-      message: 'Institutional registration stored with failed payment status',
+      message:
+        resolvedPaymentStatus === 'success'
+          ? 'Payment attempt reconciled and institutional registration stored successfully'
+          : (resolvedPaymentStatus === 'pending'
+            ? 'Institutional registration stored with pending payment status'
+            : 'Institutional registration stored with failed payment status'),
       data: registration,
     },
   };
