@@ -16,6 +16,7 @@ const heroSlideRoutes = require('./routes/heroSlideRoutes');
 const contactQueryRoutes = require('./routes/contactQueryRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const userDashboardRoutes = require('./routes/userDashboardRoutes');
+const bulkMailRoutes = require('../bulk-mail-service');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
 
@@ -49,6 +50,7 @@ app.use('/api', heroSlideRoutes);
 app.use('/api', contactQueryRoutes);
 app.use('/api', ticketRoutes);
 app.use('/api/user-dashboard', userDashboardRoutes);
+app.use('/mail', bulkMailRoutes);
 
 app.use(errorHandler);
 

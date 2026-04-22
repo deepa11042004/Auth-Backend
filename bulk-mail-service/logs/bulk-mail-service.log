@@ -1,0 +1,111 @@
+{"timestamp":"2026-04-22T05:40:53.340Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:40:53.341Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:40:53.342Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:40:53.343Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T05:40:53.344Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:40:53.343Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:40:53.345Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:41:28.356Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:42:03.360Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:42:38.390Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:43:13.422Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:43:48.439Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:44:23.452Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:44:58.479Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:45:33.503Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:46:08.528Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:46:35.973Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T05:46:35.980Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:46:35.981Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:46:35.984Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:46:35.983Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:46:35.985Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:46:35.986Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:46:43.541Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:15.261Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:15.261Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:15.259Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:15.265Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T05:47:15.267Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:15.267Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:15.268Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:52.135Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":2,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T05:47:52.138Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:52.139Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:52.139Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:52.140Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:52.141Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:47:52.142Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:48:27.141Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:48:38.375Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T05:48:38.379Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:48:38.381Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:48:38.382Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:48:38.385Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:48:38.385Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:48:38.386Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:49:13.397Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:49:48.416Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:55:00.706Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:55:00.711Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:55:00.713Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:55:00.718Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T05:55:00.728Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:55:00.736Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:55:00.738Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:55:35.746Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:56:10.772Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:56:45.779Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:57:20.797Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:57:55.815Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:58:30.842Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:59:05.854Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T05:59:40.876Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:00:15.904Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:00:50.917Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:01:25.946Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:02:00.960Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:02:35.982Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:03:11.012Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:03:46.036Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:04:21.054Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:04:33.626Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T06:04:33.631Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:04:33.635Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:04:33.632Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:04:33.635Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:04:33.629Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:04:33.637Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:04:56.084Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:05:27.329Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:05:27.331Z","level":"error","message":"Queue events error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:05:27.331Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T06:05:27.333Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:05:27.333Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:05:27.333Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:05:27.334Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:06:02.359Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:06:37.377Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:07:12.404Z","level":"error","message":"Email worker error","meta":{"message":"Redis version needs to be greater or equal than 5.0.0 Current: 3.2.100"}}
+{"timestamp":"2026-04-22T06:20:06.034Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T06:22:11.552Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T06:22:37.654Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T06:40:50.138Z","level":"error","message":"Email worker job failed","meta":{"jobId":"1","email":"mohhdanish8152@gmail.com","attemptsMade":1,"message":"Table 'bserc_core_db.email_logs' doesn't exist"}}
+{"timestamp":"2026-04-22T06:40:55.429Z","level":"error","message":"Email worker job failed","meta":{"jobId":"1","email":"mohhdanish8152@gmail.com","attemptsMade":2,"message":"Table 'bserc_core_db.email_logs' doesn't exist"}}
+{"timestamp":"2026-04-22T06:41:05.763Z","level":"error","message":"Failed to write failed email log","meta":{"message":"Table 'bserc_core_db.email_logs' doesn't exist"}}
+{"timestamp":"2026-04-22T06:41:05.815Z","level":"warn","message":"Queue job failed event","meta":{"jobId":"1","failedReason":"Table 'bserc_core_db.email_logs' doesn't exist"}}
+{"timestamp":"2026-04-22T06:41:05.816Z","level":"error","message":"Email worker job failed","meta":{"jobId":"1","email":"mohhdanish8152@gmail.com","attemptsMade":3,"message":"Table 'bserc_core_db.email_logs' doesn't exist"}}
+{"timestamp":"2026-04-22T06:52:25.461Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T06:54:57.184Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:02:30.232Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:02:31.750Z","level":"warn","message":"Queue job failed event","meta":{"jobId":"4","failedReason":"email is not valid"}}
+{"timestamp":"2026-04-22T07:02:31.754Z","level":"error","message":"Email worker job failed","meta":{"jobId":"4","email":"invalid-email","attemptsMade":1,"message":"email is not valid"}}
+{"timestamp":"2026-04-22T07:02:31.762Z","level":"warn","message":"Queue job failed event","meta":{"jobId":"4","failedReason":"email is not valid"}}
+{"timestamp":"2026-04-22T07:04:32.244Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:06:41.626Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:10:16.405Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:23:47.798Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:24:16.339Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:36:52.298Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:39:49.822Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-22T07:40:08.838Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
