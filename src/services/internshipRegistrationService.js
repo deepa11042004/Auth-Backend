@@ -309,6 +309,126 @@ async function hasExistingCompletedInternshipRegistration(email, connection = db
   return Boolean(rows[0]);
 }
 
+async function reconcilePendingInternshipRegistrationByEmail(email, connection = db) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return false;
+  }
+
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    return false;
+  }
+
+  const [attemptRows] = await connection.query(
+    `SELECT
+       id,
+       full_name,
+       mobile_number,
+       payment_status,
+       razorpay_order_id,
+       razorpay_payment_id
+     FROM ${INTERNSHIP_TABLE}
+     WHERE LOWER(email) = LOWER(?)
+       AND (
+         payment_status IS NULL
+         OR LOWER(payment_status) NOT IN ('captured', 'authorized', 'not_required')
+       )
+       AND razorpay_order_id IS NOT NULL
+       AND razorpay_order_id <> ''
+     ORDER BY id DESC
+     LIMIT 1`,
+    [normalizedEmail]
+  );
+
+  const attempt = attemptRows[0] || null;
+  if (!attempt) {
+    return false;
+  }
+
+  const orderId = cleanText(attempt.razorpay_order_id);
+  const existingPaymentId = cleanText(attempt.razorpay_payment_id);
+
+  if (!orderId) {
+    return false;
+  }
+
+  let successfulPayment = null;
+
+  if (existingPaymentId) {
+    const resolved = await resolvePaymentFromOrderContext(
+      razorpayClient,
+      orderId,
+      existingPaymentId
+    );
+
+    const resolvedStatus = cleanText(resolved.payment?.status).toLowerCase();
+    if (
+      resolved.payment
+      && String(resolved.payment.order_id) === orderId
+      && SUCCESSFUL_PAYMENT_STATUSES.has(resolvedStatus)
+    ) {
+      successfulPayment = resolved.payment;
+    }
+  }
+
+  if (!successfulPayment) {
+    const resolvedFromOrder = await resolveSuccessfulOrderPayment(
+      razorpayClient,
+      orderId
+    );
+
+    if (resolvedFromOrder && String(resolvedFromOrder.order_id) === orderId) {
+      successfulPayment = resolvedFromOrder;
+    }
+  }
+
+  if (!successfulPayment) {
+    return false;
+  }
+
+  const successfulStatus = cleanText(successfulPayment.status).toLowerCase();
+  if (!SUCCESSFUL_PAYMENT_STATUSES.has(successfulStatus)) {
+    return false;
+  }
+
+  const paymentAmountInPaise = Number(successfulPayment.amount);
+  const paymentAmount =
+    Number.isFinite(paymentAmountInPaise) && paymentAmountInPaise >= 0
+      ? paymentAmountInPaise / 100
+      : 0;
+  const paymentCurrency =
+    cleanText(successfulPayment.currency).toUpperCase() || PAYMENT_CURRENCY;
+  const paymentId = cleanText(successfulPayment.id) || existingPaymentId || null;
+  const paymentStatus = cleanText(successfulPayment.status) || 'captured';
+
+  await connection.query(
+    `UPDATE ${INTERNSHIP_TABLE}
+     SET payment_amount = ?,
+         payment_currency = ?,
+         razorpay_payment_id = ?,
+         payment_status = ?
+     WHERE id = ?
+     LIMIT 1`,
+    [
+      paymentAmount,
+      paymentCurrency,
+      paymentId,
+      paymentStatus,
+      Number(attempt.id),
+    ]
+  );
+
+  await createUserIfMissing(
+    connection,
+    normalizedEmail,
+    cleanText(attempt.full_name),
+    cleanText(attempt.mobile_number)
+  );
+
+  return true;
+}
+
 function normalizeRegistrationPayload(input) {
   const payload = {
     internship_name:
@@ -624,6 +744,25 @@ async function createPaymentOrder(input) {
       status: 400,
       body: { message: 'Invalid email format' },
     };
+  }
+
+  if (await hasExistingCompletedInternshipRegistration(applicantEmail)) {
+    return {
+      status: 200,
+      body: {
+        requires_payment: false,
+        already_registered: true,
+        amount: 0,
+        currency: PAYMENT_CURRENCY,
+        message: 'You have already applied for this internship',
+      },
+    };
+  }
+
+  try {
+    await reconcilePendingInternshipRegistrationByEmail(applicantEmail);
+  } catch {
+    // Best effort only: do not block order creation if reconciliation lookup fails.
   }
 
   if (await hasExistingCompletedInternshipRegistration(applicantEmail)) {

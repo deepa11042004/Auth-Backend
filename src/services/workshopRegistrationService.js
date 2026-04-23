@@ -314,6 +314,173 @@ async function incrementWorkshopEnrollmentCounter(connection, workshopId) {
   }
 }
 
+async function createWorkshopUserIfMissing(connection, fullName, email, contactNumber) {
+  const [existingUsers] = await connection.query(
+    'SELECT id FROM users WHERE email = ? LIMIT 1',
+    [email]
+  );
+
+  if (existingUsers[0]) {
+    return;
+  }
+
+  const hashedPassword = await hashPassword(contactNumber);
+
+  try {
+    await connection.query(
+      'INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)',
+      [fullName, email, hashedPassword, roles.USER]
+    );
+  } catch (err) {
+    if (!err || err.code !== 'ER_DUP_ENTRY') {
+      throw err;
+    }
+  }
+}
+
+async function reconcilePendingWorkshopRegistration(workshopId, email, connection = db) {
+  if (!workshopId || !email) {
+    return false;
+  }
+
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    return false;
+  }
+
+  const [attemptRows] = await connection.query(
+    `SELECT
+       id,
+       full_name,
+       contact_number,
+       payment_status,
+       razorpay_order_id,
+       razorpay_payment_id
+     FROM ${REGISTRATION_TABLE}
+     WHERE workshop_id = ?
+       AND email = ?
+       AND (
+         payment_status IS NULL
+         OR LOWER(payment_status) NOT IN ('captured', 'authorized', 'not_required')
+       )
+       AND razorpay_order_id IS NOT NULL
+       AND razorpay_order_id <> ''
+     ORDER BY id DESC
+     LIMIT 1`,
+    [workshopId, email]
+  );
+
+  const attempt = attemptRows[0] || null;
+  if (!attempt) {
+    return false;
+  }
+
+  const orderId = cleanText(attempt.razorpay_order_id);
+  const existingPaymentId = cleanText(attempt.razorpay_payment_id);
+
+  if (!orderId) {
+    return false;
+  }
+
+  let successfulPayment = null;
+
+  if (existingPaymentId) {
+    const resolved = await resolvePaymentFromOrderContext(
+      razorpayClient,
+      orderId,
+      existingPaymentId
+    );
+
+    const resolvedStatus = cleanText(resolved.payment?.status).toLowerCase();
+    if (
+      resolved.payment
+      && String(resolved.payment.order_id) === orderId
+      && SUCCESSFUL_PAYMENT_STATUSES.has(resolvedStatus)
+    ) {
+      successfulPayment = resolved.payment;
+    }
+  }
+
+  if (!successfulPayment) {
+    const resolvedFromOrder = await resolveSuccessfulOrderPayment(
+      razorpayClient,
+      orderId
+    );
+
+    if (resolvedFromOrder && String(resolvedFromOrder.order_id) === orderId) {
+      successfulPayment = resolvedFromOrder;
+    }
+  }
+
+  if (!successfulPayment) {
+    return false;
+  }
+
+  const successfulStatus = cleanText(successfulPayment.status).toLowerCase();
+  if (!SUCCESSFUL_PAYMENT_STATUSES.has(successfulStatus)) {
+    return false;
+  }
+
+  const paymentAmountInPaise = Number(successfulPayment.amount);
+  const paymentAmount =
+    Number.isFinite(paymentAmountInPaise) && paymentAmountInPaise >= 0
+      ? paymentAmountInPaise / 100
+      : null;
+  const paymentCurrency = cleanText(successfulPayment.currency).toUpperCase() || PAYMENT_CURRENCY;
+  const paymentId = cleanText(successfulPayment.id) || existingPaymentId || null;
+  const paymentStatus = cleanText(successfulPayment.status) || 'captured';
+  const paymentMode = cleanText(successfulPayment.method) || 'gateway_verified';
+
+  await connection.query(
+    `UPDATE ${REGISTRATION_TABLE}
+     SET payment_amount = ?,
+         payment_currency = ?,
+         razorpay_order_id = ?,
+         razorpay_payment_id = ?,
+         payment_status = ?,
+         payment_mode = ?
+     WHERE id = ?
+     LIMIT 1`,
+    [
+      paymentAmount,
+      paymentCurrency,
+      orderId,
+      paymentId,
+      paymentStatus,
+      paymentMode,
+      Number(attempt.id),
+    ]
+  );
+
+  await incrementWorkshopEnrollmentCounter(connection, workshopId);
+  await createWorkshopUserIfMissing(
+    connection,
+    cleanText(attempt.full_name),
+    email,
+    cleanText(attempt.contact_number)
+  );
+
+  return true;
+}
+
+async function ensureDesignationSupportsOthers(connection) {
+  const [designationColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${REGISTRATION_TABLE} LIKE 'designation'`
+  );
+
+  const column = designationColumn[0] || null;
+  const type = cleanText(column?.Type || column?.type).toLowerCase();
+
+  if (!column || type.includes("'others'")) {
+    return;
+  }
+
+  await connection.query(
+    `ALTER TABLE ${REGISTRATION_TABLE}
+     MODIFY COLUMN designation ENUM('Student','Faculty','Professional','Others') NOT NULL`
+  );
+}
+
 async function ensureCountryColumn(connection) {
   const [countryColumn] = await connection.query(
     `SHOW COLUMNS FROM ${REGISTRATION_TABLE} LIKE 'country'`
@@ -469,6 +636,29 @@ async function createPaymentOrder(input) {
         message: 'You have already registered for this workshop',
       },
     };
+  }
+
+  if (payerEmail) {
+    try {
+      await reconcilePendingWorkshopRegistration(workshopId, payerEmail);
+    } catch {
+      // Best effort only: continue normal order creation when reconciliation fails.
+    }
+
+    if (await hasExistingCompletedRegistration(workshopId, payerEmail)) {
+      return {
+        status: 200,
+        body: {
+          requires_payment: false,
+          already_registered: true,
+          amount: 0,
+          currency: PAYMENT_CURRENCY,
+          workshop_id: workshopId,
+          workshop_title: workshop.title,
+          message: 'You have already registered for this workshop',
+        },
+      };
+    }
   }
 
   const amountInPaise = toMoneyInPaise(workshop.fee);
@@ -838,6 +1028,7 @@ async function registerForWorkshop(input) {
 
   try {
     await ensureCountryColumn(connection);
+    await ensureDesignationSupportsOthers(connection);
 
     await connection.beginTransaction();
 
@@ -1051,26 +1242,7 @@ async function registerForWorkshop(input) {
 
     if (shouldFinalizeRegistration) {
       await incrementWorkshopEnrollmentCounter(connection, workshopId);
-
-      const [existingUsers] = await connection.query(
-        'SELECT id FROM users WHERE email = ? LIMIT 1',
-        [email]
-      );
-
-      if (!existingUsers[0]) {
-        const hashedPassword = await hashPassword(contactNumber);
-
-        try {
-          await connection.query(
-            'INSERT INTO users (full_name, email, password, role) VALUES (?, ?, ?, ?)',
-            [fullName, email, hashedPassword, roles.USER]
-          );
-        } catch (err) {
-          if (err.code !== 'ER_DUP_ENTRY') {
-            throw err;
-          }
-        }
-      }
+      await createWorkshopUserIfMissing(connection, fullName, email, contactNumber);
     }
 
     await connection.commit();

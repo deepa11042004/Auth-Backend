@@ -286,6 +286,121 @@ async function upsertStudentPaymentAttempt(normalizedPayload, paymentDetails) {
   }
 }
 
+async function reconcilePendingStudentRegistrationByEmail(email, connection = db) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return false;
+  }
+
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    return false;
+  }
+
+  const [attemptRows] = await connection.query(
+    `SELECT
+       id,
+       payment_status,
+       razorpay_order_id,
+       razorpay_payment_id
+     FROM ${StudentRegistration.STUDENT_REGISTRATION_TABLE}
+     WHERE LOWER(email) = LOWER(?)
+       AND (
+         payment_status IS NULL
+         OR LOWER(payment_status) NOT IN ('captured', 'authorized', 'not_required')
+       )
+       AND razorpay_order_id IS NOT NULL
+       AND razorpay_order_id <> ''
+     ORDER BY id DESC
+     LIMIT 1`,
+    [normalizedEmail]
+  );
+
+  const attempt = attemptRows[0] || null;
+  if (!attempt) {
+    return false;
+  }
+
+  const orderId = cleanText(attempt.razorpay_order_id);
+  const existingPaymentId = cleanText(attempt.razorpay_payment_id);
+
+  if (!orderId) {
+    return false;
+  }
+
+  let successfulPayment = null;
+
+  if (existingPaymentId) {
+    const resolved = await resolvePaymentFromOrderContext(
+      razorpayClient,
+      orderId,
+      existingPaymentId
+    );
+
+    const resolvedStatus = cleanText(resolved.payment?.status).toLowerCase();
+    if (
+      resolved.payment
+      && String(resolved.payment.order_id) === orderId
+      && SUCCESSFUL_PAYMENT_STATUSES.has(resolvedStatus)
+    ) {
+      successfulPayment = resolved.payment;
+    }
+  }
+
+  if (!successfulPayment) {
+    const resolvedFromOrder = await resolveSuccessfulOrderPayment(
+      razorpayClient,
+      orderId
+    );
+
+    if (resolvedFromOrder && String(resolvedFromOrder.order_id) === orderId) {
+      successfulPayment = resolvedFromOrder;
+    }
+  }
+
+  if (!successfulPayment) {
+    return false;
+  }
+
+  const successfulStatus = cleanText(successfulPayment.status).toLowerCase();
+  if (!SUCCESSFUL_PAYMENT_STATUSES.has(successfulStatus)) {
+    return false;
+  }
+
+  const paymentAmountInMinorUnits = Number(successfulPayment.amount);
+  const paymentAmount =
+    Number.isFinite(paymentAmountInMinorUnits) && paymentAmountInMinorUnits >= 0
+      ? paymentAmountInMinorUnits / 100
+      : null;
+  const paymentCurrency = cleanText(successfulPayment.currency).toUpperCase() || null;
+  const paymentId = cleanText(successfulPayment.id) || existingPaymentId || null;
+  const paymentStatus = cleanText(successfulPayment.status) || 'captured';
+  const paymentMode = cleanText(successfulPayment.method) || 'gateway_verified';
+
+  await connection.query(
+    `UPDATE ${StudentRegistration.STUDENT_REGISTRATION_TABLE}
+     SET payment_amount = ?,
+         payment_currency = ?,
+         razorpay_order_id = ?,
+         razorpay_payment_id = ?,
+         payment_status = ?,
+         payment_mode = ?
+     WHERE id = ?
+     LIMIT 1`,
+    [
+      paymentAmount,
+      paymentCurrency,
+      orderId,
+      paymentId,
+      paymentStatus,
+      paymentMode,
+      Number(attempt.id),
+    ]
+  );
+
+  return true;
+}
+
 function toFeeAmount(value, fallback) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 0) {
@@ -826,6 +941,25 @@ async function createPaymentOrder(payload) {
       status: 400,
       body: { message: 'Unable to resolve payment configuration for the selected category' },
     };
+  }
+
+  if (await StudentRegistration.isStudentEmailTaken(email)) {
+    return {
+      status: 200,
+      body: {
+        requires_payment: false,
+        already_registered: true,
+        amount: 0,
+        currency: paymentConfig.currency,
+        message: 'Email already registered for summer school.',
+      },
+    };
+  }
+
+  try {
+    await reconcilePendingStudentRegistrationByEmail(email);
+  } catch {
+    // Best effort only: do not block order creation if reconciliation lookup fails.
   }
 
   if (await StudentRegistration.isStudentEmailTaken(email)) {
