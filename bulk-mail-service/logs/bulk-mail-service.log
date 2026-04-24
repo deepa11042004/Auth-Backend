@@ -958,3 +958,11 @@
 {"timestamp":"2026-04-23T11:43:55.901Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
 {"timestamp":"2026-04-24T06:27:28.289Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
 {"timestamp":"2026-04-24T07:14:50.746Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T07:53:59.011Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T08:14:21.239Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T08:54:03.632Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T11:56:39.295Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T12:15:53.206Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T12:25:14.792Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T12:25:40.116Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T12:31:40.785Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
