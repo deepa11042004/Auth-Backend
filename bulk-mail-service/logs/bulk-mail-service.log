@@ -956,3 +956,5 @@
 {"timestamp":"2026-04-23T11:41:08.661Z","level":"error","message":"Redis connection error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
 {"timestamp":"2026-04-23T11:41:08.661Z","level":"error","message":"Email worker error","meta":{"message":"connect ECONNREFUSED 127.0.0.1:6379"}}
 {"timestamp":"2026-04-23T11:43:55.901Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T06:27:28.289Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}
+{"timestamp":"2026-04-24T07:14:50.746Z","level":"info","message":"Email worker ready","meta":{"queue":"bulk-email-queue","concurrency":3,"limiterMax":10,"limiterDuration":1000}}

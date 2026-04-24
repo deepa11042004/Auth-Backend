@@ -20,7 +20,9 @@ const MENTOR_REGISTRATION_FEES = Object.freeze({
   },
 });
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
+const COMPLETED_PAYMENT_STATUSES = new Set(['captured', 'authorized', 'not_required']);
 const TRANSIENT_PAYMENT_STATUSES = new Set(['created', 'pending']);
+const PAYMENT_STATUS_FAILED = 'failed';
 const PAYMENT_FETCH_RETRY_ATTEMPTS = 6;
 const PAYMENT_FETCH_RETRY_DELAY_MS = 1200;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -37,6 +39,39 @@ const OPTIONAL_MENTOR_COLUMNS = [
   'razorpay_payment_id',
   'payment_status',
   'payment_mode',
+];
+const MENTOR_REGISTRATION_BASE_COLUMNS = [
+  'full_name',
+  'email',
+  'phone',
+  'dob',
+  'current_position',
+  'organization',
+  'years_experience',
+  'professional_bio',
+  'primary_track',
+  'secondary_skills',
+  'key_competencies',
+  'video_call',
+  'phone_call',
+  'live_chat',
+  'email_support',
+  'availability',
+  'max_students',
+  'session_duration',
+  'consultation_fee',
+  'price_5_sessions',
+  'price_10_sessions',
+  'price_extended',
+  'complimentary_session',
+  'resume',
+  'profile_photo',
+  'linkedin_url',
+  'portfolio_url',
+  'has_mentored_before',
+  'mentoring_experience',
+  'accepted_guidelines',
+  'accepted_code_of_conduct',
 ];
 
 let mentorTableColumnsPromise = null;
@@ -117,6 +152,54 @@ function resolveMentorPaymentConfig(nationality) {
     amount: MENTOR_REGISTRATION_FEES[normalizedNationality].amount,
     currency: MENTOR_REGISTRATION_FEES[normalizedNationality].currency,
   };
+}
+
+function normalizePaymentAttemptStatus(value) {
+  const normalized = cleanText(value).toLowerCase();
+
+  if (
+    normalized === 'pending'
+    || normalized === 'created'
+    || normalized === 'order_created'
+  ) {
+    return 'pending';
+  }
+
+  if (
+    normalized === 'failed'
+    || normalized === 'failure'
+    || normalized === 'payment_failed'
+    || normalized === 'cancelled'
+    || normalized === 'canceled'
+    || normalized === 'payment_cancelled'
+    || normalized === 'dismissed'
+  ) {
+    return PAYMENT_STATUS_FAILED;
+  }
+
+  return '';
+}
+
+function normalizeStoredPaymentStatus(value) {
+  const normalized = cleanText(value).toLowerCase();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized === 'success') {
+    return 'captured';
+  }
+
+  if (normalized === 'cancelled' || normalized === 'canceled') {
+    return PAYMENT_STATUS_FAILED;
+  }
+
+  return normalized;
+}
+
+function isCompletedPaymentStatus(value) {
+  return COMPLETED_PAYMENT_STATUSES.has(normalizeStoredPaymentStatus(value));
 }
 
 function toMoneyInMinorUnits(value) {
@@ -202,6 +285,67 @@ async function fetchPaymentFromRazorpayWithRetry(razorpayClient, paymentId) {
   }
 
   return { payment: latestPayment, fetchError: lastError };
+}
+
+async function resolvePaymentFromOrderContext(razorpayClient, orderId, paymentId) {
+  const { payment, fetchError } = await fetchPaymentFromRazorpayWithRetry(
+    razorpayClient,
+    paymentId
+  );
+
+  if (payment && String(payment.order_id) === orderId) {
+    return { payment, fetchError: null };
+  }
+
+  let lastError = fetchError;
+
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+    const matchingPayment = items.find((item) => cleanText(item?.id) === paymentId);
+
+    if (matchingPayment) {
+      return { payment: matchingPayment, fetchError: null };
+    }
+  } catch (err) {
+    lastError = err;
+  }
+
+  return { payment, fetchError: lastError };
+}
+
+async function resolveSuccessfulOrderPayment(razorpayClient, orderId) {
+  try {
+    const orderPayments = await razorpayClient.orders.fetchPayments(orderId);
+    const items = Array.isArray(orderPayments?.items) ? orderPayments.items : [];
+
+    const successfulPayment = items.find((item) =>
+      SUCCESSFUL_PAYMENT_STATUSES.has(cleanText(item?.status).toLowerCase())
+    );
+
+    return successfulPayment || null;
+  } catch {
+    return null;
+  }
+}
+
+function toMajorUnits(valueInMinorUnits, fallback = null) {
+  const numeric = Number(valueInMinorUnits);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return fallback;
+  }
+
+  return numeric / 100;
+}
+
+function getMentorWritableColumns(mentorTableColumns) {
+  if (!mentorTableColumns) {
+    return [...MENTOR_REGISTRATION_BASE_COLUMNS];
+  }
+
+  return [...MENTOR_REGISTRATION_BASE_COLUMNS, ...OPTIONAL_MENTOR_COLUMNS].filter((column) =>
+    mentorTableColumns.has(column)
+  );
 }
 
 function toBoolean(value) {
@@ -336,16 +480,211 @@ async function getMentorDetailColumns() {
   return [...detailColumns, ...DERIVED_MENTOR_DETAIL_COLUMNS].join(',\n  ');
 }
 
-async function isMentorEmailTaken(email) {
-  const [rows] = await db.query(
-    `SELECT id
+async function findMentorByEmail(email, connection = db) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const [rows] = await connection.query(
+    `SELECT id, payment_status, razorpay_order_id, razorpay_payment_id
      FROM ${MENTOR_REGISTRATION_TABLE}
      WHERE LOWER(email) = LOWER(?)
      LIMIT 1`,
-    [email]
+    [normalizedEmail]
   );
 
-  return rows.length > 0;
+  return rows[0] || null;
+}
+
+async function isMentorEmailTaken(email) {
+  const existing = await findMentorByEmail(email);
+  if (!existing) {
+    return false;
+  }
+
+  return isCompletedPaymentStatus(existing.payment_status);
+}
+
+async function resolveSuccessfulMentorPaymentForAttempt({ orderId, paymentId }) {
+  const normalizedOrderId = cleanText(orderId);
+  const normalizedPaymentId = cleanText(paymentId);
+
+  if (!normalizedOrderId) {
+    return null;
+  }
+
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    return null;
+  }
+
+  if (normalizedPaymentId) {
+    const resolved = await resolvePaymentFromOrderContext(
+      razorpayClient,
+      normalizedOrderId,
+      normalizedPaymentId
+    );
+
+    const resolvedStatus = cleanText(resolved.payment?.status).toLowerCase();
+    if (
+      resolved.payment
+      && String(resolved.payment.order_id) === normalizedOrderId
+      && SUCCESSFUL_PAYMENT_STATUSES.has(resolvedStatus)
+    ) {
+      return resolved.payment;
+    }
+  }
+
+  const resolvedFromOrder = await resolveSuccessfulOrderPayment(
+    razorpayClient,
+    normalizedOrderId
+  );
+
+  if (resolvedFromOrder && String(resolvedFromOrder.order_id) === normalizedOrderId) {
+    return resolvedFromOrder;
+  }
+
+  return null;
+}
+
+async function reconcilePendingMentorRegistrationByEmail(email, connection = db) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    return false;
+  }
+
+  const [rows] = await connection.query(
+    `SELECT id, payment_status, razorpay_order_id, razorpay_payment_id
+     FROM ${MENTOR_REGISTRATION_TABLE}
+     WHERE LOWER(email) = LOWER(?)
+       AND (
+         payment_status IS NULL
+         OR LOWER(payment_status) NOT IN ('captured', 'authorized', 'not_required')
+       )
+       AND razorpay_order_id IS NOT NULL
+       AND razorpay_order_id <> ''
+     LIMIT 1`,
+    [normalizedEmail]
+  );
+
+  const attempt = rows[0] || null;
+  if (!attempt) {
+    return false;
+  }
+
+  const successfulPayment = await resolveSuccessfulMentorPaymentForAttempt({
+    orderId: attempt.razorpay_order_id,
+    paymentId: attempt.razorpay_payment_id,
+  });
+
+  if (!successfulPayment) {
+    return false;
+  }
+
+  await connection.query(
+    `UPDATE ${MENTOR_REGISTRATION_TABLE}
+     SET payment_amount = ?,
+         payment_currency = ?,
+         razorpay_order_id = ?,
+         razorpay_payment_id = ?,
+         payment_status = ?,
+         payment_mode = ?
+     WHERE id = ?
+     LIMIT 1`,
+    [
+      toMajorUnits(successfulPayment.amount, null),
+      cleanText(successfulPayment.currency).toUpperCase() || null,
+      cleanText(successfulPayment.order_id) || cleanText(attempt.razorpay_order_id) || null,
+      cleanText(successfulPayment.id) || cleanText(attempt.razorpay_payment_id) || null,
+      cleanText(successfulPayment.status) || 'captured',
+      cleanText(successfulPayment.method) || 'gateway_verified',
+      Number(attempt.id),
+    ]
+  );
+
+  return true;
+}
+
+async function updateMentorRegistrationById(connection, mentorId, payload, mentorTableColumns) {
+  const writableColumns = getMentorWritableColumns(mentorTableColumns);
+  if (writableColumns.length === 0) {
+    return;
+  }
+
+  const assignments = writableColumns.map((column) => {
+    if (column === 'resume' || column === 'profile_photo') {
+      return `${column} = COALESCE(?, ${column})`;
+    }
+
+    return `${column} = ?`;
+  });
+
+  const values = writableColumns.map((column) => payload[column] ?? null);
+
+  await connection.query(
+    `UPDATE ${MENTOR_REGISTRATION_TABLE}
+     SET ${assignments.join(', ')}
+     WHERE id = ?
+     LIMIT 1`,
+    [...values, mentorId]
+  );
+}
+
+async function upsertMentorRegistration(payload) {
+  const normalizedEmail = normalizeEmail(payload?.email);
+  if (!normalizedEmail) {
+    throw new Error('email is required');
+  }
+
+  const connection = await db.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const mentorTableColumns = await getMentorTableColumns();
+    const existing = await findMentorByEmail(normalizedEmail, connection);
+    const normalizedPayload = {
+      ...payload,
+      email: normalizedEmail,
+    };
+
+    if (existing) {
+      if (isCompletedPaymentStatus(existing.payment_status)) {
+        await connection.commit();
+        return {
+          outcome: 'already_completed',
+          id: Number(existing.id),
+        };
+      }
+
+      await updateMentorRegistrationById(
+        connection,
+        Number(existing.id),
+        normalizedPayload,
+        mentorTableColumns
+      );
+
+      await connection.commit();
+      return {
+        outcome: 'updated',
+        id: Number(existing.id),
+      };
+    }
+
+    const createdId = await createMentorRegistration(normalizedPayload, connection);
+
+    await connection.commit();
+    return {
+      outcome: 'created',
+      id: Number(createdId),
+    };
+  } catch (err) {
+    await connection.rollback();
+    throw err;
+  } finally {
+    connection.release();
+  }
 }
 
 async function createPaymentOrder(input) {
@@ -372,6 +711,8 @@ async function createPaymentOrder(input) {
       body: { message: 'nationality must be Indian or Others' },
     };
   }
+
+  await reconcilePendingMentorRegistrationByEmail(applicantEmail);
 
   if (await isMentorEmailTaken(applicantEmail)) {
     return {
@@ -574,45 +915,104 @@ async function verifyPaymentForRegistration(input) {
   };
 }
 
-async function createMentorRegistration(payload) {
-  const legacyColumns = [
-    'full_name',
-    'email',
-    'phone',
-    'dob',
-    'current_position',
-    'organization',
-    'years_experience',
-    'professional_bio',
-    'primary_track',
-    'secondary_skills',
-    'key_competencies',
-    'video_call',
-    'phone_call',
-    'live_chat',
-    'email_support',
-    'availability',
-    'max_students',
-    'session_duration',
-    'consultation_fee',
-    'price_5_sessions',
-    'price_10_sessions',
-    'price_extended',
-    'complimentary_session',
-    'resume',
-    'profile_photo',
-    'linkedin_url',
-    'portfolio_url',
-    'has_mentored_before',
-    'mentoring_experience',
-    'accepted_guidelines',
-    'accepted_code_of_conduct',
-  ];
+async function logPaymentAttempt(input) {
+  const applicantEmail = normalizeEmail(input?.email);
+  const paymentConfig = resolveMentorPaymentConfig(input?.nationality);
+  const attemptStatus = normalizePaymentAttemptStatus(input?.payment_status);
 
+  if (!applicantEmail) {
+    return {
+      status: 400,
+      body: { message: 'email is required' },
+    };
+  }
+
+  if (!EMAIL_REGEX.test(applicantEmail)) {
+    return {
+      status: 400,
+      body: { message: 'Invalid email format' },
+    };
+  }
+
+  if (!paymentConfig) {
+    return {
+      status: 400,
+      body: { message: 'nationality must be Indian or Others' },
+    };
+  }
+
+  if (!attemptStatus) {
+    return {
+      status: 400,
+      body: {
+        message: 'payment_status must be pending or failed',
+      },
+    };
+  }
+
+  let paymentDetails = {
+    payment_amount: paymentConfig.amount,
+    payment_currency: paymentConfig.currency,
+    razorpay_order_id: cleanText(input?.razorpay_order_id) || null,
+    razorpay_payment_id: cleanText(input?.razorpay_payment_id || input?.transaction_id) || null,
+    payment_status: attemptStatus,
+    payment_mode:
+      cleanText(input?.payment_mode)
+      || (attemptStatus === 'pending' ? 'order_created' : 'gateway_failed'),
+  };
+
+  if (attemptStatus === PAYMENT_STATUS_FAILED) {
+    const successfulPayment = await resolveSuccessfulMentorPaymentForAttempt({
+      orderId: paymentDetails.razorpay_order_id,
+      paymentId: paymentDetails.razorpay_payment_id,
+    });
+
+    if (successfulPayment) {
+      paymentDetails = {
+        payment_amount: toMajorUnits(successfulPayment.amount, paymentConfig.amount),
+        payment_currency:
+          cleanText(successfulPayment.currency).toUpperCase() || paymentConfig.currency,
+        razorpay_order_id:
+          cleanText(successfulPayment.order_id) || paymentDetails.razorpay_order_id || null,
+        razorpay_payment_id:
+          cleanText(successfulPayment.id) || paymentDetails.razorpay_payment_id || null,
+        payment_status: cleanText(successfulPayment.status) || 'captured',
+        payment_mode: cleanText(successfulPayment.method) || 'gateway_verified',
+      };
+    }
+  }
+
+  const upsertResult = await upsertMentorRegistration({
+    ...input,
+    email: applicantEmail,
+    nationality: paymentConfig.nationality,
+    payment_amount: paymentDetails.payment_amount,
+    payment_currency: paymentDetails.payment_currency,
+    razorpay_order_id: paymentDetails.razorpay_order_id,
+    razorpay_payment_id: paymentDetails.razorpay_payment_id,
+    payment_status: paymentDetails.payment_status,
+    payment_mode: paymentDetails.payment_mode,
+  });
+
+  const normalizedPaymentStatus = normalizeStoredPaymentStatus(paymentDetails.payment_status);
+  const isSuccessfulAttempt = isCompletedPaymentStatus(normalizedPaymentStatus);
+  const statusCode = upsertResult.outcome === 'created' ? 201 : 200;
+
+  return {
+    status: statusCode,
+    body: {
+      message: isSuccessfulAttempt
+        ? 'Payment reconciled successfully and mentor registration saved.'
+        : `Mentor registration saved with ${normalizedPaymentStatus || attemptStatus} payment status.`,
+      payment_status: normalizedPaymentStatus || attemptStatus,
+      registration_id: upsertResult.id,
+    },
+  };
+}
+
+async function createMentorRegistration(payload, connection = db) {
   const mentorTableColumns = await getMentorTableColumns();
-  const baseColumns = mentorTableColumns
-    ? [...legacyColumns, ...OPTIONAL_MENTOR_COLUMNS].filter((column) => mentorTableColumns.has(column))
-    : legacyColumns;
+  const baseColumns = getMentorWritableColumns(mentorTableColumns);
 
   const baseValues = baseColumns.map((column) => payload[column] ?? null);
 
@@ -629,7 +1029,7 @@ async function createMentorRegistration(payload) {
   let result;
 
   try {
-    [result] = await db.query(
+    [result] = await connection.query(
       `INSERT INTO ${MENTOR_REGISTRATION_TABLE} (${columnsWithStatus.join(', ')})
        VALUES (${placeholdersWithStatus})`,
       valuesWithStatus
@@ -642,7 +1042,7 @@ async function createMentorRegistration(payload) {
 
     const placeholders = baseColumns.map(() => '?').join(', ');
 
-    [result] = await db.query(
+    [result] = await connection.query(
       `INSERT INTO ${MENTOR_REGISTRATION_TABLE} (${baseColumns.join(', ')})
        VALUES (${placeholders})`,
       baseValues
@@ -879,7 +1279,9 @@ async function getMentorFileById(id, column) {
 module.exports = {
   createPaymentOrder,
   verifyPaymentForRegistration,
+  logPaymentAttempt,
   isMentorEmailTaken,
+  upsertMentorRegistration,
   createMentorRegistration,
   getMentorById,
   getMentorFileById,

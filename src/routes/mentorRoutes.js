@@ -44,6 +44,11 @@ const router = express.Router();
  */
 router.post('/mentor/register', uploadMentorRegistrationFiles, mentorRegistrationController.registerMentor);
 router.post('/mentor/create-order', mentorRegistrationController.createPaymentOrder);
+router.post(
+  '/mentor/log-payment-attempt',
+  uploadMentorRegistrationFiles,
+  mentorRegistrationController.logPaymentAttempt
+);
 
 router.get('/mentor/requests', mentorRegistrationController.getPendingMentors);
 router.get('/mentor/list', mentorRegistrationController.getActiveMentors);

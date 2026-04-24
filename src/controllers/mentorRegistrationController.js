@@ -383,18 +383,17 @@ async function registerMentor(req, res) {
       });
     }
 
-    const emailTaken = await mentorRegistrationService.isMentorEmailTaken(payload.email);
-    if (emailTaken) {
+    const upsertResult = await mentorRegistrationService.upsertMentorRegistration({
+      ...payload,
+      ...(paymentVerification.paymentDetails || {}),
+    });
+
+    if (upsertResult.outcome === 'already_completed') {
       return res.status(200).json({
         message: 'Payment verified. Email already registered.',
         payment: paymentVerification.paymentDetails,
       });
     }
-
-    await mentorRegistrationService.createMentorRegistration({
-      ...payload,
-      ...(paymentVerification.paymentDetails || {}),
-    });
 
     return res.status(201).json({
       message: 'Payment verified and mentor registered successfully',
@@ -407,6 +406,34 @@ async function registerMentor(req, res) {
 
     console.error('Mentor registration error:', err);
     return res.status(500).json({ error: 'Failed to register mentor' });
+  }
+}
+
+async function logPaymentAttempt(req, res) {
+  try {
+    const { payload, errors } = buildMentorPayload(req);
+    if (errors.length > 0) {
+      return res.status(400).json({ error: errors.join(' ') });
+    }
+
+    const result = await mentorRegistrationService.logPaymentAttempt({
+      ...payload,
+      payment_status: req.body.payment_status,
+      payment_mode: req.body.payment_mode,
+      razorpay_order_id: req.body.razorpay_order_id,
+      razorpay_payment_id: req.body.razorpay_payment_id || req.body.transaction_id,
+      transaction_id: req.body.transaction_id,
+      failure_reason: req.body.failure_reason,
+    });
+
+    return res.status(result.status).json(result.body);
+  } catch (err) {
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Email already registered.' });
+    }
+
+    console.error('Mentor payment attempt logging error:', err);
+    return res.status(500).json({ error: 'Failed to log mentor payment attempt' });
   }
 }
 
@@ -607,6 +634,7 @@ async function rejectMentor(req, res) {
 module.exports = {
   createPaymentOrder,
   registerMentor,
+  logPaymentAttempt,
   getMentorById,
   getMentorResume,
   getMentorProfilePhoto,

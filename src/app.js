@@ -16,6 +16,7 @@ const heroSlideRoutes = require('./routes/heroSlideRoutes');
 const contactQueryRoutes = require('./routes/contactQueryRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const userDashboardRoutes = require('./routes/userDashboardRoutes');
+const registrationRoutes = require('./routes/registrationRoutes');
 const bulkMailRoutes = require('../bulk-mail-service');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
@@ -23,7 +24,11 @@ const swaggerSpec = require('./config/swagger');
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
 app.get('/', (req, res) => {
@@ -50,6 +55,7 @@ app.use('/api', heroSlideRoutes);
 app.use('/api', contactQueryRoutes);
 app.use('/api', ticketRoutes);
 app.use('/api/user-dashboard', userDashboardRoutes);
+app.use('/api/registrations', registrationRoutes);
 app.use('/mail', bulkMailRoutes);
 
 app.use(errorHandler);
