@@ -1,4 +1,5 @@
 const multer = require('multer');
+const path = require('path');
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
@@ -8,12 +9,52 @@ const ALLOWED_RESUME_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 
+const ALLOWED_RESUME_EXTENSIONS = new Set(['.pdf', '.doc', '.docx']);
+
 const ALLOWED_PROFILE_PHOTO_MIME_TYPES = new Set([
   'image/jpeg',
   'image/jpg',
   'image/png',
   'image/webp',
 ]);
+
+const ALLOWED_PROFILE_PHOTO_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+
+const GENERIC_BINARY_MIME_TYPES = new Set([
+  '',
+  'application/octet-stream',
+  'binary/octet-stream',
+  'application/force-download',
+]);
+
+function hasAllowedExtension(fileName, allowedExtensions) {
+  const extension = path.extname(String(fileName || '')).toLowerCase();
+  return allowedExtensions.has(extension);
+}
+
+function isGenericBinaryMimeType(mimeType) {
+  return GENERIC_BINARY_MIME_TYPES.has(String(mimeType || '').toLowerCase());
+}
+
+function isAllowedResumeFile(file) {
+  const mimeType = String(file.mimetype || '').toLowerCase();
+  if (ALLOWED_RESUME_MIME_TYPES.has(mimeType)) {
+    return true;
+  }
+
+  return isGenericBinaryMimeType(mimeType)
+    && hasAllowedExtension(file.originalname, ALLOWED_RESUME_EXTENSIONS);
+}
+
+function isAllowedProfilePhotoFile(file) {
+  const mimeType = String(file.mimetype || '').toLowerCase();
+  if (ALLOWED_PROFILE_PHOTO_MIME_TYPES.has(mimeType)) {
+    return true;
+  }
+
+  return isGenericBinaryMimeType(mimeType)
+    && hasAllowedExtension(file.originalname, ALLOWED_PROFILE_PHOTO_EXTENSIONS);
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -23,7 +64,7 @@ const upload = multer({
   },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'resume') {
-      if (!ALLOWED_RESUME_MIME_TYPES.has(file.mimetype)) {
+      if (!isAllowedResumeFile(file)) {
         const error = new Error('Invalid resume file type. Use PDF, DOC, or DOCX.');
         error.code = 'UNSUPPORTED_RESUME_TYPE';
         return cb(error);
@@ -33,7 +74,7 @@ const upload = multer({
     }
 
     if (file.fieldname === 'profile_photo') {
-      if (!ALLOWED_PROFILE_PHOTO_MIME_TYPES.has(file.mimetype)) {
+      if (!isAllowedProfilePhotoFile(file)) {
         const error = new Error('Invalid profile photo type. Use JPG, PNG, or WEBP image.');
         error.code = 'UNSUPPORTED_PROFILE_PHOTO_TYPE';
         return cb(error);
