@@ -1,7 +1,7 @@
 # BSERC Auth and LMS Backend API
 
 Node.js + Express backend with JWT authentication and LMS course APIs using MySQL.
-//for payment
+//for payment hh 
 ## 1. What This Backend Provides
 - Authentication APIs:
   - register
