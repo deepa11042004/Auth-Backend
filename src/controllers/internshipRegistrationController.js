@@ -1,5 +1,8 @@
 const internshipRegistrationService = require('../services/internshipRegistrationService');
-const { uploadInternshipPassportPhoto } = require('../services/s3StorageService');
+const {
+  uploadInternshipPassportPhoto,
+  getPresignedObjectUrl,
+} = require('../services/s3StorageService');
 
 async function createPaymentOrder(req, res, next) {
   try {
@@ -65,7 +68,32 @@ async function registerWithoutPayment(req, res, next) {
 async function getInternshipRegistrations(req, res, next) {
   try {
     const result = await internshipRegistrationService.getInternshipRegistrations();
-    return res.status(result.status).json(result.body);
+    if (result.status !== 200 || !result.body?.applications) {
+      return res.status(result.status).json(result.body);
+    }
+
+    const applicationsWithUrls = await Promise.all(
+      result.body.applications.map(async (application) => {
+        if (!application?.passport_photo_path) {
+          return { ...application, passport_photo_url: null };
+        }
+
+        try {
+          const url = await getPresignedObjectUrl({
+            s3Path: application.passport_photo_path,
+          });
+          return { ...application, passport_photo_url: url };
+        } catch (err) {
+          console.warn('Failed to presign internship passport photo URL:', err);
+          return { ...application, passport_photo_url: null };
+        }
+      })
+    );
+
+    return res.status(result.status).json({
+      ...result.body,
+      applications: applicationsWithUrls,
+    });
   } catch (err) {
     return next(err);
   }
@@ -110,6 +138,29 @@ async function transferInternshipRegistrationPaymentStatus(req, res, next) {
   }
 }
 
+async function getInternshipPassportPhotoUrl(req, res, next) {
+  try {
+    const registrationId = Number.parseInt(String(req.params.id || ''), 10);
+    if (!Number.isInteger(registrationId) || registrationId <= 0) {
+      return res.status(400).json({ message: 'Invalid registration id.' });
+    }
+
+    const passportPhotoPath = await internshipRegistrationService.getInternshipPassportPhotoPath(
+      registrationId
+    );
+
+    if (!passportPhotoPath) {
+      return res.status(404).json({ message: 'Passport photo not found.' });
+    }
+
+    const url = await getPresignedObjectUrl({ s3Path: passportPhotoPath });
+
+    return res.status(200).json({ url });
+  } catch (err) {
+    return next(err);
+  }
+}
+
 module.exports = {
   createPaymentOrder,
   verifyPaymentAndRegister,
@@ -119,4 +170,5 @@ module.exports = {
   updateInternshipFeeSettings,
   deleteInternshipRegistration,
   transferInternshipRegistrationPaymentStatus,
+  getInternshipPassportPhotoUrl,
 };

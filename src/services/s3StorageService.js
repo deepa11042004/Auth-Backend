@@ -1,6 +1,11 @@
 const path = require('path');
 const crypto = require('crypto');
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+} = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 const DEFAULT_REGION = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '';
 
@@ -34,6 +39,38 @@ function getS3Client() {
   });
 
   return cachedClient;
+}
+
+function parseS3Path(s3Path) {
+  const value = String(s3Path || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  if (value.startsWith('s3://')) {
+    const stripped = value.slice('s3://'.length);
+    const [bucket, ...rest] = stripped.split('/');
+    if (!bucket || rest.length === 0) {
+      return null;
+    }
+    return { bucket, key: rest.join('/') };
+  }
+
+  const bucket = getBucketName();
+  if (!bucket) {
+    return null;
+  }
+
+  return { bucket, key: value };
+}
+
+function getPresignExpirySeconds() {
+  const raw = Number(process.env.AWS_S3_PRESIGN_EXPIRES_SECONDS || 300);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return 300;
+  }
+
+  return Math.min(Math.round(raw), 3600);
 }
 
 function sanitizeSegment(value) {
@@ -130,6 +167,26 @@ async function uploadInternshipPassportPhoto({
   };
 }
 
+async function getPresignedObjectUrl({ s3Path, expiresInSeconds }) {
+  const parsed = parseS3Path(s3Path);
+  if (!parsed) {
+    throw new Error('Invalid S3 path for presigned URL.');
+  }
+
+  const client = getS3Client();
+  const expiresIn = Number.isFinite(expiresInSeconds)
+    ? Math.min(Math.max(1, Math.round(expiresInSeconds)), 3600)
+    : getPresignExpirySeconds();
+
+  const command = new GetObjectCommand({
+    Bucket: parsed.bucket,
+    Key: parsed.key,
+  });
+
+  return getSignedUrl(client, command, { expiresIn });
+}
+
 module.exports = {
   uploadInternshipPassportPhoto,
+  getPresignedObjectUrl,
 };

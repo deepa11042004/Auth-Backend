@@ -1,6 +1,7 @@
 const express = require('express');
 
 const internshipRegistrationController = require('../controllers/internshipRegistrationController');
+const authAdmin = require('../middleware/authAdmin');
 const { uploadInternshipPhoto } = require('../middleware/internshipPhotoUpload');
 
 const router = express.Router();
@@ -52,7 +53,32 @@ router.post(
  */
 router.get(
   '/internship/registration/list',
+  authAdmin,
   internshipRegistrationController.getInternshipRegistrations
+);
+
+/**
+ * @openapi
+ * /api/internship/registration/{id}/passport-photo-url:
+ *   get:
+ *     tags: [Internships]
+ *     summary: Get a presigned passport photo URL for admin viewing
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Presigned URL
+ *       404:
+ *         description: Passport photo not found
+ */
+router.get(
+  '/internship/registration/:id/passport-photo-url',
+  authAdmin,
+  internshipRegistrationController.getInternshipPassportPhotoUrl
 );
 
 /**

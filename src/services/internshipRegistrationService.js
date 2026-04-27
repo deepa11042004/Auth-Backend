@@ -1259,6 +1259,22 @@ async function getInternshipRegistrations() {
   };
 }
 
+async function getInternshipPassportPhotoPath(registrationId) {
+  const [rows] = await db.query(
+    `SELECT passport_photo_path
+     FROM ${INTERNSHIP_TABLE}
+     WHERE id = ?
+     LIMIT 1`,
+    [registrationId]
+  );
+
+  if (!rows[0]) {
+    return null;
+  }
+
+  return rows[0].passport_photo_path || null;
+}
+
 async function getInternshipFeeSettings() {
   const settings = await readInternshipFeeSettings();
 
@@ -1438,6 +1454,7 @@ module.exports = {
   verifyPaymentAndRegister,
   registerWithoutPayment,
   getInternshipRegistrations,
+  getInternshipPassportPhotoPath,
   getInternshipFeeSettings,
   updateInternshipFeeSettings,
   deleteInternshipRegistration,
