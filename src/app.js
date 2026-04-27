@@ -17,7 +17,6 @@ const contactQueryRoutes = require('./routes/contactQueryRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const userDashboardRoutes = require('./routes/userDashboardRoutes');
 const registrationRoutes = require('./routes/registrationRoutes');
-const bulkMailRoutes = require('../bulk-mail-service');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
 
@@ -56,7 +55,6 @@ app.use('/api', contactQueryRoutes);
 app.use('/api', ticketRoutes);
 app.use('/api/user-dashboard', userDashboardRoutes);
 app.use('/api/registrations', registrationRoutes);
-app.use('/mail', bulkMailRoutes);
 
 app.use(errorHandler);
 
