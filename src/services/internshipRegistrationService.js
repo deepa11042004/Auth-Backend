@@ -457,9 +457,12 @@ function normalizeRegistrationPayload(input) {
     declaration_accepted: toBoolean(
       input.declaration_accepted ?? input.declarationAccepted
     ),
-    passport_photo: Buffer.isBuffer(input.passport_photo)
-      ? input.passport_photo
-      : (Buffer.isBuffer(input.passportPhoto) ? input.passportPhoto : null),
+    passport_photo_path: toNullableText(
+      input.passport_photo_path
+      || input.passportPhotoPath
+      || input.passport_photo_url
+      || input.passportPhotoUrl
+    ),
     passport_photo_mime_type: toNullableText(
       input.passport_photo_mime_type || input.passportPhotoMimeType
     ),
@@ -577,7 +580,7 @@ async function createInternshipRegistrationRecord(connection, payload, paymentIn
       educational_qualification,
       is_lateral,
       declaration_accepted,
-      passport_photo,
+      passport_photo_path,
       passport_photo_mime_type,
       passport_photo_file_name,
       payment_amount,
@@ -604,7 +607,7 @@ async function createInternshipRegistrationRecord(connection, payload, paymentIn
       payload.educational_qualification,
       payload.is_lateral,
       payload.declaration_accepted,
-      payload.passport_photo,
+      payload.passport_photo_path,
       payload.passport_photo_mime_type,
       payload.passport_photo_file_name,
       paymentInfo.payment_amount,
@@ -620,7 +623,7 @@ async function registerInternshipInternal(input, paymentInfo, options = {}) {
   const { requirePhoto = true, createUser = true } = options;
   const { payload, errors } = normalizeRegistrationPayload(input || {});
 
-  if (requirePhoto && !payload.passport_photo) {
+  if (requirePhoto && !payload.passport_photo_path) {
     errors.push('passport_photo is required');
   }
 
@@ -1188,7 +1191,8 @@ async function getInternshipApplicationById(id, connection = db) {
       educational_qualification,
       is_lateral,
       declaration_accepted,
-      CASE WHEN passport_photo IS NULL THEN 0 ELSE 1 END AS has_passport_photo,
+      CASE WHEN passport_photo_path IS NULL AND passport_photo IS NULL THEN 0 ELSE 1 END AS has_passport_photo,
+      passport_photo_path,
       passport_photo_mime_type,
       passport_photo_file_name,
       payment_amount,
@@ -1232,7 +1236,8 @@ async function getInternshipRegistrations() {
       educational_qualification,
       is_lateral,
       declaration_accepted,
-      CASE WHEN passport_photo IS NULL THEN 0 ELSE 1 END AS has_passport_photo,
+      CASE WHEN passport_photo_path IS NULL AND passport_photo IS NULL THEN 0 ELSE 1 END AS has_passport_photo,
+      passport_photo_path,
       passport_photo_mime_type,
       passport_photo_file_name,
       payment_amount,

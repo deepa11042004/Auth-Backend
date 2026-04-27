@@ -1,4 +1,5 @@
 const internshipRegistrationService = require('../services/internshipRegistrationService');
+const { uploadInternshipPassportPhoto } = require('../services/s3StorageService');
 
 async function createPaymentOrder(req, res, next) {
   try {
@@ -15,7 +16,15 @@ async function verifyPaymentAndRegister(req, res, next) {
     const uploadedPhoto = req.internshipPhoto || req.file;
 
     if (uploadedPhoto?.buffer) {
-      payload.passport_photo = uploadedPhoto.buffer;
+      const uploadResult = await uploadInternshipPassportPhoto({
+        buffer: uploadedPhoto.buffer,
+        mimeType: uploadedPhoto.mimetype,
+        originalName: uploadedPhoto.originalname,
+        email: payload.email,
+        internshipName: payload.internship_name || payload.internshipName,
+      });
+
+      payload.passport_photo_path = uploadResult.s3Path;
       payload.passport_photo_mime_type = uploadedPhoto.mimetype;
       payload.passport_photo_file_name = uploadedPhoto.originalname;
     }
@@ -33,7 +42,15 @@ async function registerWithoutPayment(req, res, next) {
     const uploadedPhoto = req.internshipPhoto || req.file;
 
     if (uploadedPhoto?.buffer) {
-      payload.passport_photo = uploadedPhoto.buffer;
+      const uploadResult = await uploadInternshipPassportPhoto({
+        buffer: uploadedPhoto.buffer,
+        mimeType: uploadedPhoto.mimetype,
+        originalName: uploadedPhoto.originalname,
+        email: payload.email,
+        internshipName: payload.internship_name || payload.internshipName,
+      });
+
+      payload.passport_photo_path = uploadResult.s3Path;
       payload.passport_photo_mime_type = uploadedPhoto.mimetype;
       payload.passport_photo_file_name = uploadedPhoto.originalname;
     }
