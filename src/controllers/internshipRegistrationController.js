@@ -67,33 +67,14 @@ async function registerWithoutPayment(req, res, next) {
 
 async function getInternshipRegistrations(req, res, next) {
   try {
-    const result = await internshipRegistrationService.getInternshipRegistrations();
-    if (result.status !== 200 || !result.body?.applications) {
-      return res.status(result.status).json(result.body);
-    }
-
-    const applicationsWithUrls = await Promise.all(
-      result.body.applications.map(async (application) => {
-        if (!application?.passport_photo_path) {
-          return { ...application, passport_photo_url: null };
-        }
-
-        try {
-          const url = await getPresignedObjectUrl({
-            s3Path: application.passport_photo_path,
-          });
-          return { ...application, passport_photo_url: url };
-        } catch (err) {
-          console.warn('Failed to presign internship passport photo URL:', err);
-          return { ...application, passport_photo_url: null };
-        }
-      })
-    );
-
-    return res.status(result.status).json({
-      ...result.body,
-      applications: applicationsWithUrls,
+    const result = await internshipRegistrationService.getInternshipRegistrations({
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+      registrationType: req.query.registrationType,
+      paymentStatus: req.query.paymentStatus,
+      emailSearch: req.query.emailSearch,
     });
+    return res.status(result.status).json(result.body);
   } catch (err) {
     return next(err);
   }
