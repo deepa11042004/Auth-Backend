@@ -4,7 +4,6 @@ const cors = require('cors');
 const path = require('path');
 const swaggerUi = require('swagger-ui-express');
 const authRoutes = require('./routes/authRoutes');
-const courseRoutes = require('./routes/courseRoutes');
 const workshopRoutes = require('./routes/workshopRoutes');
 const workshopListRoutes = require('./routes/workshopListRoutes');
 const mentorRoutes = require('./routes/mentorRoutes');
@@ -42,7 +41,6 @@ app.get('/api-docs.json', (req, res) => {
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.use('/auth', authRoutes);
-app.use('/api', courseRoutes);
 app.use('/api', workshopRoutes);
 app.use('/api', workshopListRoutes);
 app.use('/api', mentorRoutes);

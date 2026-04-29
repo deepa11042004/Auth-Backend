@@ -69,7 +69,6 @@ jobs:
             -e DB_USER=${{ secrets.DB_USER }} \
             -e DB_PASSWORD=${{ secrets.DB_PASSWORD }} \
             -e DB_NAME=${{ secrets.DB_NAME }} \
-            -e LMS_DB_NAME=${{ secrets.LMS_DB_NAME }} \
             -e JWT_SECRET=${{ secrets.JWT_SECRET }} \
             -e RAZORPAY_KEY_ID=${{ secrets.RAZORPAY_KEY_ID }} \
             -e RAZORPAY_KEY_SECRET=${{ secrets.RAZORPAY_KEY_SECRET }} \

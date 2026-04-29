@@ -1,7 +1,6 @@
 require('dotenv').config();
 const app = require('./src/app');
 const bsercDB = require('./src/config/db');
-const { lmsDB } = bsercDB;
 const { ensureRegistrationTable } = require('./src/models/Registration');
 
 const PORT = Number(process.env.PORT) || 5000;
@@ -17,11 +16,7 @@ async function start() {
     await bsercConnection.ping();
     bsercConnection.release();
 
-    const lmsConnection = await lmsDB.getConnection();
-    await lmsConnection.ping();
-    lmsConnection.release();
-
-    console.log('MySQL Connected (bserc_core_db, lms_core_db)');
+    console.log('MySQL Connected (bserc_core_db)');
 
     await ensureRegistrationTable(bsercDB);
     console.log('Registration table ensured');

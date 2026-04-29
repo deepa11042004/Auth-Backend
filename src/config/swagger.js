@@ -9,7 +9,7 @@ const options = {
       title: 'BSERC Common Auth Backend API',
       version: '1.0.0',
       description:
-        'Common backend APIs for BSERC website, LMS portal, Android app, and iOS app.',
+        'Common backend APIs for BSERC website, Android app, and iOS app.',
     },
     servers: [
       {
@@ -30,10 +30,6 @@ const options = {
       {
         name: 'Auth',
         description: 'Authentication and user account endpoints',
-      },
-      {
-        name: 'Courses',
-        description: 'LMS course, curriculum, and enrollment endpoints',
       },
       {
         name: 'Workshops',
