@@ -1215,7 +1215,40 @@ async function getInternshipApplicationById(id, connection = db) {
   return mapInternshipApplicationRow(rows[0]);
 }
 
-async function getInternshipRegistrations() {
+async function getInternshipRegistrations(options = {}) {
+  const page = Number(options.page) || 1;
+  const pageSize = Number(options.pageSize) || 50;
+  const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+  const safePageSize = Number.isFinite(pageSize) && pageSize > 0
+    ? Math.min(Math.floor(pageSize), 200)
+    : 50;
+  const offset = (safePage - 1) * safePageSize;
+
+  const registrationType = String(options.registrationType || '').trim().toLowerCase();
+  const paymentStatus = String(options.paymentStatus || '').trim().toLowerCase();
+  const emailSearch = String(options.emailSearch || '').trim().toLowerCase();
+
+  const whereClauses = [];
+  const whereParams = [];
+
+  if (registrationType === 'regular') {
+    whereClauses.push('is_lateral = 0');
+  } else if (registrationType === 'lateral') {
+    whereClauses.push('is_lateral = 1');
+  }
+
+  if (paymentStatus && paymentStatus !== 'all') {
+    whereClauses.push('LOWER(payment_status) = ?');
+    whereParams.push(paymentStatus);
+  }
+
+  if (emailSearch) {
+    whereClauses.push('LOWER(email) LIKE ?');
+    whereParams.push(`%${emailSearch}%`);
+  }
+
+  const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
   const [rows] = await db.query(
     `SELECT
       id,
@@ -1248,13 +1281,30 @@ async function getInternshipRegistrations() {
       DATE_FORMAT(created_at, '%Y-%m-%d %H:%i:%s') AS created_at,
       DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS updated_at
      FROM ${INTERNSHIP_TABLE}
-     ORDER BY created_at DESC, id DESC`
+     ${whereSql}
+     ORDER BY created_at DESC, id DESC
+     LIMIT ? OFFSET ?`,
+    [...whereParams, safePageSize, offset]
   );
+
+  const [countRows] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM ${INTERNSHIP_TABLE}
+     ${whereSql}`,
+    whereParams
+  );
+
+  const total = Number(countRows?.[0]?.total || 0);
+  const totalPages = Math.max(1, Math.ceil(total / safePageSize));
 
   return {
     status: 200,
     body: {
       applications: rows.map(mapInternshipApplicationRow),
+      page: safePage,
+      pageSize: safePageSize,
+      total,
+      totalPages,
     },
   };
 }
