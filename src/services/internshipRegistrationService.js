@@ -10,6 +10,7 @@ const INTERNSHIP_FEE_SETTINGS_TABLE = 'summer_internship_fee_settings';
 const PAYMENT_CURRENCY = 'INR';
 const DEFAULT_GENERAL_INTERNSHIP_FEE_RUPEES = 100;
 const DEFAULT_LATERAL_INTERNSHIP_FEE_RUPEES = 100;
+const DEFAULT_LATERAL_EWS_INTERNSHIP_FEE_RUPEES = 1350;
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['captured', 'authorized']);
 const COMPLETED_PAYMENT_STATUSES = new Set(['captured', 'authorized', 'not_required']);
 const FAILED_PAYMENT_STATUSES = new Set(['failed', 'cancelled', 'canceled']);
@@ -19,6 +20,9 @@ const PAYMENT_FETCH_RETRY_DELAY_MS = 1200;
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const INTERNSHIP_GENERAL_CATEGORY = 'General Category';
+const INTERNSHIP_EWS_CATEGORY = 'EWS(Economically weaker section)';
+const INTERNSHIP_LEGACY_EWS_CATEGORY = 'EWS(Economily weaker section)';
 
 function cleanText(value) {
   if (Array.isArray(value)) {
@@ -30,6 +34,31 @@ function cleanText(value) {
 
 function normalizeEmail(value) {
   return cleanText(value).toLowerCase();
+}
+
+function normalizeInternshipCategory(value) {
+  const normalized = cleanText(value).toLowerCase();
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized === 'genral' || normalized === 'general' || normalized === 'general category') {
+    return INTERNSHIP_GENERAL_CATEGORY;
+  }
+
+  if (
+    normalized === 'ews'
+    || normalized === 'ews category'
+    || normalized === INTERNSHIP_EWS_CATEGORY.toLowerCase()
+    || normalized === INTERNSHIP_LEGACY_EWS_CATEGORY.toLowerCase()
+    || normalized === 'ews (economically weaker section)'
+    || normalized === 'ews (economily weaker section)'
+  ) {
+    return INTERNSHIP_EWS_CATEGORY;
+  }
+
+  return '';
 }
 
 function toNullableText(value) {
@@ -121,16 +150,39 @@ async function ensureInternshipFeeSettingsSchema(connection = db) {
       id TINYINT PRIMARY KEY,
       general_fee_rupees DECIMAL(10,2) NOT NULL DEFAULT 100.00,
       lateral_fee_rupees DECIMAL(10,2) NOT NULL DEFAULT 100.00,
+      ews_lateral_fee_rupees DECIMAL(10,2) NOT NULL DEFAULT 1350.00,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`
   );
 
+  const [ewsLateralFeeColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${INTERNSHIP_FEE_SETTINGS_TABLE} LIKE 'ews_lateral_fee_rupees'`
+  );
+
+  if (ewsLateralFeeColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${INTERNSHIP_FEE_SETTINGS_TABLE}
+       ADD COLUMN ews_lateral_fee_rupees DECIMAL(10,2) NOT NULL DEFAULT 1350.00 AFTER lateral_fee_rupees`
+    );
+  }
+
   await connection.query(
-    `INSERT INTO ${INTERNSHIP_FEE_SETTINGS_TABLE} (id, general_fee_rupees, lateral_fee_rupees)
-     VALUES (1, ?, ?)
+    `INSERT INTO ${INTERNSHIP_FEE_SETTINGS_TABLE} (id, general_fee_rupees, lateral_fee_rupees, ews_lateral_fee_rupees)
+     VALUES (1, ?, ?, ?)
      ON DUPLICATE KEY UPDATE id = id`,
-    [DEFAULT_GENERAL_INTERNSHIP_FEE_RUPEES, DEFAULT_LATERAL_INTERNSHIP_FEE_RUPEES]
+    [
+      DEFAULT_GENERAL_INTERNSHIP_FEE_RUPEES,
+      DEFAULT_LATERAL_INTERNSHIP_FEE_RUPEES,
+      DEFAULT_LATERAL_EWS_INTERNSHIP_FEE_RUPEES,
+    ]
+  );
+
+  await connection.query(
+    `UPDATE ${INTERNSHIP_FEE_SETTINGS_TABLE}
+     SET ews_lateral_fee_rupees = ?
+     WHERE id = 1 AND ews_lateral_fee_rupees IS NULL`,
+    [DEFAULT_LATERAL_EWS_INTERNSHIP_FEE_RUPEES]
   );
 }
 
@@ -138,7 +190,7 @@ async function readInternshipFeeSettings(connection = db) {
   await ensureInternshipFeeSettingsSchema(connection);
 
   const [rows] = await connection.query(
-    `SELECT general_fee_rupees, lateral_fee_rupees
+    `SELECT general_fee_rupees, lateral_fee_rupees, ews_lateral_fee_rupees
      FROM ${INTERNSHIP_FEE_SETTINGS_TABLE}
      WHERE id = 1
      LIMIT 1`
@@ -155,11 +207,25 @@ async function readInternshipFeeSettings(connection = db) {
       row.lateral_fee_rupees,
       DEFAULT_LATERAL_INTERNSHIP_FEE_RUPEES
     ),
+    ews_lateral_fee_rupees: toFeeRupees(
+      row.ews_lateral_fee_rupees,
+      DEFAULT_LATERAL_EWS_INTERNSHIP_FEE_RUPEES
+    ),
   };
 }
 
-function getApplicableInternshipFeeRupees(settings, isLateral) {
-  return isLateral ? settings.lateral_fee_rupees : settings.general_fee_rupees;
+function getApplicableInternshipFeeRupees(settings, isLateral, category) {
+  if (!isLateral) {
+    return settings.general_fee_rupees;
+  }
+
+  const normalizedCategory = normalizeInternshipCategory(category);
+
+  if (normalizedCategory === INTERNSHIP_EWS_CATEGORY) {
+    return settings.ews_lateral_fee_rupees;
+  }
+
+  return settings.lateral_fee_rupees;
 }
 
 function isValidDateString(value) {
@@ -734,6 +800,7 @@ async function registerInternshipInternal(input, paymentInfo, options = {}) {
 async function createPaymentOrder(input) {
   const applicantEmail = normalizeEmail(input?.email);
   const isLateral = toBoolean(input?.is_lateral ?? input?.isLateral ?? input?.islateral);
+  const category = normalizeInternshipCategory(input?.category);
 
   if (!applicantEmail) {
     return {
@@ -782,7 +849,7 @@ async function createPaymentOrder(input) {
   }
 
   const feeSettings = await readInternshipFeeSettings();
-  const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral);
+  const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral, category);
   const amountInPaise = toMoneyInPaise(internshipFeeRupees);
 
   if (amountInPaise === null) {
@@ -823,6 +890,12 @@ async function createPaymentOrder(input) {
     notes: {
       source: 'summer_internship_application',
       applicant_email: applicantEmail,
+      ...(isLateral
+        ? {
+          registration_type: 'lateral',
+          ...(category ? { category } : {}),
+        }
+        : { registration_type: 'general' }),
     },
   });
 
@@ -1006,8 +1079,9 @@ async function verifyPaymentAndRegister(input) {
 
 async function registerWithoutPayment(input) {
   const isLateral = toBoolean(input?.is_lateral ?? input?.isLateral ?? input?.islateral);
+  const category = normalizeInternshipCategory(input?.category);
   const feeSettings = await readInternshipFeeSettings();
-  const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral);
+  const internshipFeeRupees = getApplicableInternshipFeeRupees(feeSettings, isLateral, category);
   const amountInPaise = toMoneyInPaise(internshipFeeRupees);
   const paymentStatus = normalizePaymentStatus(input?.payment_status);
   const isFailedAttempt = isFailedPaymentStatus(paymentStatus);
@@ -1031,6 +1105,28 @@ async function registerWithoutPayment(input) {
 
   const providedOrderId = toNullableText(input?.razorpay_order_id);
   const providedPaymentId = toNullableText(input?.razorpay_payment_id);
+  const razorpayClient = getRazorpayClient();
+
+  let orderPaymentAmount = amountInPaise / 100;
+  let orderPaymentCurrency = PAYMENT_CURRENCY;
+
+  if (isPaymentAttempt && providedOrderId && razorpayClient) {
+    try {
+      const order = await razorpayClient.orders.fetch(providedOrderId);
+      const orderAmountInPaise = Number(order?.amount);
+      const orderCurrency = cleanText(order?.currency).toUpperCase();
+
+      if (Number.isFinite(orderAmountInPaise) && orderAmountInPaise >= 0) {
+        orderPaymentAmount = orderAmountInPaise / 100;
+      }
+
+      if (orderCurrency) {
+        orderPaymentCurrency = orderCurrency;
+      }
+    } catch {
+      // Keep fee-based fallback when order lookup is unavailable.
+    }
+  }
 
   let paymentInfo = {
     payment_amount: 0,
@@ -1044,8 +1140,6 @@ async function registerWithoutPayment(input) {
     let upgradedSuccessfulPayment = null;
 
     if (providedOrderId) {
-      const razorpayClient = getRazorpayClient();
-
       if (razorpayClient) {
         try {
           if (providedPaymentId) {
@@ -1104,8 +1198,8 @@ async function registerWithoutPayment(input) {
       };
     } else {
       paymentInfo = {
-        payment_amount: amountInPaise / 100,
-        payment_currency: PAYMENT_CURRENCY,
+        payment_amount: orderPaymentAmount,
+        payment_currency: orderPaymentCurrency,
         razorpay_order_id: providedOrderId,
         razorpay_payment_id: providedPaymentId,
         payment_status: paymentStatus || 'failed',
@@ -1113,8 +1207,8 @@ async function registerWithoutPayment(input) {
     }
   } else if (isTransientAttempt) {
     paymentInfo = {
-      payment_amount: amountInPaise / 100,
-      payment_currency: PAYMENT_CURRENCY,
+      payment_amount: orderPaymentAmount,
+      payment_currency: orderPaymentCurrency,
       razorpay_order_id: providedOrderId,
       razorpay_payment_id: providedPaymentId,
       payment_status: paymentStatus || 'pending',
@@ -1464,6 +1558,8 @@ async function transferInternshipRegistrationPaymentStatus(rawId, input = {}) {
 }
 
 async function updateInternshipFeeSettings(input) {
+  const currentSettings = await readInternshipFeeSettings();
+
   const generalFee = parseFeeRupeesInput(
     input?.general_fee_rupees ?? input?.generalFeeRupees ?? input?.general_fee
   );
@@ -1471,11 +1567,24 @@ async function updateInternshipFeeSettings(input) {
     input?.lateral_fee_rupees ?? input?.lateralFeeRupees ?? input?.lateral_fee
   );
 
-  if (generalFee === null || lateralFee === null) {
+  const hasEwsLateralFeeInput =
+    Object.prototype.hasOwnProperty.call(input || {}, 'ews_lateral_fee_rupees')
+    || Object.prototype.hasOwnProperty.call(input || {}, 'ewsLateralFeeRupees')
+    || Object.prototype.hasOwnProperty.call(input || {}, 'ews_lateral_fee');
+
+  const ewsLateralFee = hasEwsLateralFeeInput
+    ? parseFeeRupeesInput(
+      input?.ews_lateral_fee_rupees
+      ?? input?.ewsLateralFeeRupees
+      ?? input?.ews_lateral_fee
+    )
+    : currentSettings.ews_lateral_fee_rupees;
+
+  if (generalFee === null || lateralFee === null || ewsLateralFee === null) {
     return {
       status: 400,
       body: {
-        message: 'general_fee_rupees and lateral_fee_rupees are required and must be non-negative numbers',
+        message: 'general_fee_rupees, lateral_fee_rupees, and ews_lateral_fee_rupees must be non-negative numbers',
       },
     };
   }
@@ -1484,9 +1593,9 @@ async function updateInternshipFeeSettings(input) {
 
   await db.query(
     `UPDATE ${INTERNSHIP_FEE_SETTINGS_TABLE}
-     SET general_fee_rupees = ?, lateral_fee_rupees = ?
+     SET general_fee_rupees = ?, lateral_fee_rupees = ?, ews_lateral_fee_rupees = ?
      WHERE id = 1`,
-    [generalFee, lateralFee]
+    [generalFee, lateralFee, ewsLateralFee]
   );
 
   return {
@@ -1495,6 +1604,7 @@ async function updateInternshipFeeSettings(input) {
       message: 'Internship fee settings updated successfully',
       general_fee_rupees: generalFee,
       lateral_fee_rupees: lateralFee,
+      ews_lateral_fee_rupees: ewsLateralFee,
     },
   };
 }
