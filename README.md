@@ -1,104 +1,346 @@
-# BSERC Auth and LMS Backend API
+# BSERC Auth Backend API
 
-Node.js + Express backend with JWT authentication and LMS course APIs using MySQL.
-//for payment hh 
+Node.js + Express backend providing JWT authentication, role-based access control, payment processing (Razorpay), file storage (AWS S3), and domain-specific registration APIs for BSERC platform. The LMS module has been removed.
+
 ## 1. What This Backend Provides
-- Authentication APIs:
-  - register
-  - login
-  - change password
-  - profile
-  - admin-only route
-  - instructor-only route
-- LMS APIs:
-  - published courses list
-  - full course details by slug
-  - create course
-- Workshop APIs:
-  - workshop enrollment
-  - workshop list creation
-- Swagger docs at runtime
-- Role-based authorization
-- Two database pools
+
+- **Authentication** — register, login, change password, profile, role-protected routes
+- **User Dashboard** — profile, workshops, certificates, wishlist, progress, attendance, downloads, settings
+- **Workshop Management** — workshop list CRUD, enrollment with Razorpay payment flow
+- **Internship Registration** — application with passport photo upload to S3, Razorpay payment flow, admin review
+- **Mentor Registration** — registration with resume + profile photo (S3), payment flow, admin approve/reject
+- **Summer School Registration** — student registration with Razorpay payment flow, settings management
+- **Institutional Registration** — institutional form submission with Razorpay payment flow
+- **MoU Requests** — MoU proposal form with supporting document upload
+- **Hero Slides** — admin-managed hero banner slides with media upload to S3
+- **Footer News** — admin-managed footer news/update items
+- **Contact Queries** — public contact form, admin management with solve/pending status
+- **Help Desk Tickets** — user ticket creation with attachments, admin reply and status management
+- **General Registrations** — Razorpay-backed registrations with webhook and payment sync
+- **Swagger UI** — interactive API docs at `/api-docs`
+- **Role-based authorization** — `user`, `admin`, `instructor`, `super_admin` roles
 
 ## 2. Tech Stack
-- Node.js
-- Express
+
+- Node.js + Express
 - mysql2/promise
-- jsonwebtoken
-- bcrypt
-- swagger-jsdoc
-- swagger-ui-express
+- jsonwebtoken + bcrypt
+- Razorpay (payment orders, verification, webhooks)
+- AWS SDK v3 (`@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`) — S3 file storage
+- multer — multipart file uploads
+- sharp — image processing
+- swagger-jsdoc + swagger-ui-express
 
 ## 3. Database Architecture
-Two pools are used:
 
-1. bsercDB
-- Purpose: users/auth data
-- Database: bserc_core_db
+A single MySQL pool (`bsercDB`) is used against `bserc_core_db`. The separate LMS database pool has been removed.
 
-2. lmsDB
-- Purpose: LMS data
-- Database: lms_core_db
+### 3.1 Tables Used (bserc_core_db)
 
-### 3.1 Tables Used
-bserc_core_db:
-- users
-- workshop_list
-- workshop_registrations
-
-lms_core_db:
-- courses
-- sections
-- lectures
-- lecture_resources
-- enrollments
-- ratings
-- requirements
-- learning_outcomes
+- `users`
+- `workshop_list`
+- `workshop_registrations`
+- `internship_registrations`
+- `mentor_registrations`
+- `summer_school_student_registrations`
+- `institutional_registrations`
+- `mou_requests`
+- `hero_slides`
+- `footer_news_updates`
+- `contact_queries`
+- `tickets` / `ticket_messages`
+- `registrations` (general, auto-created on startup)
 
 ## 4. Environment Variables
-Create a .env file in project root.
+
+Create a `.env` file in the project root.
 
 ### 4.1 Core Variables
-- PORT=5000
-- JWT_SECRET=your_secret
-- DB_HOST=127.0.0.1
-- DB_PORT=3306
-- DB_USER=root
-- DB_PASSWORD=your_db_password
-- DB_NAME=bserc_core_db
 
-### 4.2 Optional Split Credentials (Recommended)
-- BSERC_DB_HOST=127.0.0.1
-- BSERC_DB_PORT=3306
-- BSERC_DB_USER=root
-- BSERC_DB_PASSWORD=your_bserc_db_password
-- BSERC_DB_NAME=bserc_core_db
+```
+PORT=5000
+JWT_SECRET=your_jwt_secret
 
-- LMS_DB_HOST=127.0.0.1
-- LMS_DB_PORT=3306
-- LMS_DB_USER=root
-- LMS_DB_PASSWORD=your_lms_db_password
-- LMS_DB_NAME=lms_core_db
+# Primary DB fallback
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_db_password
+DB_NAME=bserc_core_db
+DB_CONNECTION_LIMIT=10
 
-- DB_CONNECTION_LIMIT=10
+# bserc-specific credentials (preferred over DB_* above)
+BSERC_DB_HOST=127.0.0.1
+BSERC_DB_PORT=3306
+BSERC_DB_USER=root
+BSERC_DB_PASSWORD=your_bserc_db_password
+BSERC_DB_NAME=bserc_core_db
+```
 
-### 4.3 Fallback Logic
-- bsercDB: BSERC_* -> DB_* -> defaults
-- lmsDB: LMS_* -> DB_* -> defaults
+### 4.2 AWS S3
+
+```
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=ap-south-1
+S3_BUCKET_NAME=your_bucket_name
+```
+
+### 4.3 Razorpay
+
+```
+RAZORPAY_KEY_ID=your_key_id
+RAZORPAY_KEY_SECRET=your_key_secret
+RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
+```
+
+### 4.4 DB Credential Fallback Order
+
+`BSERC_DB_*` → `DB_*` → built-in defaults
 
 ## 5. Install and Run
-1. npm install
-2. npm start
 
-Server default:
-- http://localhost:5000
+```bash
+npm install
+npm start
+```
 
-## 6. Runtime Endpoints
-- Health: GET /
-- Swagger UI: GET /api-docs
-- OpenAPI JSON: GET /api-docs.json
+Server default: `http://localhost:5000`
+
+### One-off Scripts
+
+```bash
+# Migrate existing internship passport photos from DB blobs to S3
+npm run migrate:internship-photos
+```
+
+## 6. API Endpoints
+
+### 6.1 System
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | Health check |
+| GET | `/api-docs` | Swagger UI |
+| GET | `/api-docs.json` | OpenAPI spec (JSON) |
+
+### 6.2 Authentication (`/auth`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/auth/register` | — | Register new user |
+| POST | `/auth/login` | — | Login, returns JWT |
+| POST | `/auth/change-password` | JWT | Change own password |
+| GET | `/auth/profile` | JWT | Get own profile |
+| GET | `/auth/admin-only` | JWT + admin/super_admin | Admin test route |
+| GET | `/auth/instructor-only` | JWT + instructor/super_admin | Instructor test route |
+
+### 6.3 User Dashboard (`/api/user-dashboard`)
+
+All routes require a valid user JWT.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/profile` | Get profile |
+| PUT | `/profile` | Update profile |
+| POST | `/change-password` | Change password |
+| GET | `/workshops` | Enrolled workshops |
+| GET | `/certificates` | Certificates |
+| GET | `/wishlist` | Wishlist items |
+| POST | `/wishlist` | Add to wishlist |
+| DELETE | `/wishlist/:workshopId` | Remove from wishlist |
+| GET | `/progress` | Learning progress |
+| GET | `/attendance` | Attendance records |
+| GET | `/downloads` | Downloadable resources |
+| GET | `/settings` | User settings |
+| PUT | `/settings` | Update settings |
+
+### 6.4 Workshops (`/api`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/workshop-list` | — | List all workshops |
+| GET | `/workshop-list/list` | — | Alias for workshop list |
+| GET | `/workshop-list/participants` | — | All workshop participants |
+| POST | `/workshop-list/create` | — | Create workshop |
+| PUT | `/workshop-list/:id` | — | Update workshop |
+| DELETE | `/workshop-list/:id` | — | Delete workshop |
+| POST | `/workshop/enrollment` | — | Enroll (free workshop) |
+| POST | `/workshop/enrollment/create-order` | — | Create Razorpay order |
+| POST | `/workshop/enrollment/verify-payment` | — | Verify payment and enroll |
+
+### 6.5 Internships (`/api`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/internship/registration/create-order` | — | Create Razorpay order |
+| POST | `/internship/registration/verify-payment` | — | Verify payment and register (with passport photo) |
+| POST | `/internship/registration/register` | — | Register without payment (zero-fee) |
+| GET | `/internship/registration/list` | Admin | List all applications |
+| GET | `/internship/registration/:id/passport-photo-url` | Admin | Get S3 presigned photo URL |
+
+### 6.6 Mentors (`/api`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/mentor/register` | — | Register mentor (with resume + photo) |
+| POST | `/mentor/create-order` | — | Create Razorpay order |
+| POST | `/mentor/log-payment-attempt` | — | Log payment attempt |
+| GET | `/mentor/requests` | — | List pending mentor applications |
+| GET | `/mentor/list` | — | List active mentors |
+| PATCH | `/mentor/:id/approve` | — | Approve mentor |
+| PATCH | `/mentor/:id/pending` | — | Move mentor back to pending |
+| DELETE | `/mentor/:id/reject` | — | Reject mentor |
+| GET | `/mentor/:id` | — | Get mentor by ID |
+| GET | `/mentor/:id/resume` | — | Stream mentor resume from S3 |
+| GET | `/mentor/:id/profile-photo` | — | Stream mentor profile photo from S3 |
+
+### 6.7 Summer School (`/api`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/summer-school/student-registration/create-order` | Create Razorpay order |
+| POST | `/summer-school/student-registration/verify-payment` | Verify payment and register |
+| POST | `/summer-school/student-registration/log-payment-attempt` | Log payment attempt |
+| POST | `/summer-school/student-registration` | Register (free) |
+| GET | `/summer-school/student-registration` | List registrations |
+| DELETE | `/summer-school/student-registration/:id` | Delete registration |
+| GET | `/summer-school/student-registration/settings` | Get registration settings |
+| PUT | `/summer-school/student-registration/settings` | Update registration settings |
+
+### 6.8 Institutional Registration (`/api`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/institutional-registration/create-order` | Create Razorpay order |
+| POST | `/institutional-registration/verify-payment` | Verify payment and register |
+| POST | `/institutional-registration/log-payment-attempt` | Log payment attempt |
+| POST | `/institutional-registration` | Register (free) |
+| GET | `/institutional-registration` | List registrations |
+| DELETE | `/institutional-registration/:id` | Delete registration |
+
+### 6.9 MoU Requests (`/api`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/mou-requests` | Submit MoU proposal (with document upload) |
+| GET | `/mou-requests` | List all MoU requests |
+| GET | `/mou-requests/:id/document` | Download supporting document |
+| DELETE | `/mou-requests/:id` | Delete MoU request |
+
+### 6.10 Hero Slides (`/api`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/admin/hero-slides` | Admin | Create hero slide |
+| GET | `/admin/hero-slides` | Admin | List slides (admin) |
+| PUT | `/admin/hero-slides/:id` | Admin | Update slide |
+| DELETE | `/admin/hero-slides/:id` | Admin | Delete slide |
+| GET | `/hero-slides` | — | List active slides (public) |
+| GET | `/hero-slides/:id/media` | — | Stream slide media |
+
+### 6.11 Footer News (`/api`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/admin/footer-news` | Admin | Create news item |
+| GET | `/admin/footer-news` | Admin | List items (admin) |
+| PUT | `/admin/footer-news/:id` | Admin | Update item |
+| DELETE | `/admin/footer-news/:id` | Admin | Delete item |
+| GET | `/footer-news` | — | List active items (public) |
+
+### 6.12 Contact Queries (`/api`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/contact-queries` | Submit contact form |
+| GET | `/contact-queries` | List all queries |
+| DELETE | `/contact-queries/:id` | Delete query |
+| PUT | `/contact-queries/:id/solve` | Mark as solved |
+| PUT | `/contact-queries/:id/pending` | Mark as pending |
+
+### 6.13 Help Desk Tickets (`/api`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/tickets` | User | Create ticket (with attachment) |
+| GET | `/tickets/my` | User | Get own tickets |
+| GET | `/tickets/:id` | User | Get ticket detail |
+| POST | `/tickets/:id/message` | User | Post message to ticket |
+| GET | `/admin/tickets` | Admin | List all tickets |
+| GET | `/admin/tickets/:id` | Admin | Get ticket detail |
+| PATCH | `/admin/tickets/:id/status` | Admin | Update ticket status |
+| POST | `/admin/tickets/:id/reply` | Admin | Post admin reply |
+
+### 6.14 General Registrations (`/api/registrations`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/register` | Submit registration |
+| POST | `/payment/verify` | Verify Razorpay payment |
+| GET | `/payment/sync/:payment_id` | Sync payment status |
+| POST | `/webhook` | Razorpay webhook handler |
+
+## 7. File Uploads
+
+All uploaded files are stored on **AWS S3**. Local `uploads/tickets/` is used for ticket attachments only.
+
+| Feature | Files | Middleware |
+|---------|-------|------------|
+| Internship | Passport photo (image) | `internshipPhotoUpload.js` |
+| Mentor | Resume (PDF) + profile photo (image) | `mentorRegistrationUpload.js` |
+| MoU | Supporting document | `mouDocumentUpload.js` |
+| Hero Slides | Image / video | `heroSlideUpload.js` |
+| Workshop | Banner images | `workshopImageUpload.js` |
+| Tickets | Attachments | `ticketAttachmentUpload.js` |
+
+## 8. Roles
+
+Defined in `src/constants/roles.js`:
+
+| Role | Value |
+|------|-------|
+| User | `user` |
+| Admin | `admin` |
+| Instructor | `instructor` |
+| Super Admin | `super_admin` |
+
+Enforced via `authMiddleware.js` (JWT decode), `authAdmin.js`, `authUser.js`, and `requireRole.js`.
+
+## 9. Project Structure
+
+```
+src/
+  app.js                  # Express app setup, route mounting
+  config/
+    db.js                 # MySQL pool (bsercDB)
+    swagger.js            # Swagger/OpenAPI config
+  constants/
+    roles.js              # Role constants
+  controllers/            # Request handlers
+  middleware/
+    authMiddleware.js     # JWT decode, attach req.user
+    authAdmin.js          # Admin-only guard
+    authUser.js           # User-only guard
+    requireRole.js        # Role-based guard
+    errorHandler.js       # Central error handler
+    *Upload.js            # multer upload configs per feature
+  models/                 # DB query helpers / table definitions
+  routes/                 # Express routers per feature
+  services/               # Business logic
+    authService.js
+    razorpayService.js      # Razorpay order/verify helpers
+    s3StorageService.js     # AWS S3 upload/download/presign
+    ...
+  utils/
+    hashPassword.js
+    imageProcessing.js    # sharp-based image transforms
+    jwt.js
+server.js                 # Entry point, DB ping, server start
+scripts/
+  migrate-internship-passport-photos-to-s3.js
+docs/                     # SQL table definitions and migrations
+```
 
 ## 7. Authentication and Authorization Rules
 
