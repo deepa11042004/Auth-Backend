@@ -1,6 +1,6 @@
 # BSERC Auth Backend API
 
-Node.js + Express backend providing JWT authentication, role-based access control, payment processing (Razorpay), file storage (AWS S3), and domain-specific registration APIs for BSERC platform. The LMS module has been removed.
+Node.js + Express backend providing JWT authentication, role-based access control, payment processing (Razorpay), file storage (AWS S3), and domain-specific registration APIs for BSERC platform.
 
 ## 1. What This Backend Provides
 
@@ -33,7 +33,7 @@ Node.js + Express backend providing JWT authentication, role-based access contro
 
 ## 3. Database Architecture
 
-A single MySQL pool (`bsercDB`) is used against `bserc_core_db`. The separate LMS database pool has been removed.
+A single MySQL pool (`bsercDB`) is used against `bserc_core_db`.
 
 ### 3.1 Tables Used (bserc_core_db)
 
