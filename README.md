@@ -169,7 +169,7 @@ All routes require a valid user JWT.
 | POST | `/workshop/enrollment/create-order` | — | Create Razorpay order |
 | POST | `/workshop/enrollment/verify-payment` | — | Verify payment and enroll |
 
-### 6.5 Internships (`/api`)
+### 6.5 Internships (`/api`) 
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|

@@ -16,7 +16,6 @@ const footerNewsRoutes = require('./routes/footerNewsRoutes');
 const contactQueryRoutes = require('./routes/contactQueryRoutes');
 const ticketRoutes = require('./routes/ticketRoutes');
 const userDashboardRoutes = require('./routes/userDashboardRoutes');
-const registrationRoutes = require('./routes/registrationRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
 
@@ -54,7 +53,6 @@ app.use('/api', footerNewsRoutes);
 app.use('/api', contactQueryRoutes);
 app.use('/api', ticketRoutes);
 app.use('/api/user-dashboard', userDashboardRoutes);
-app.use('/api/registrations', registrationRoutes);
 
 app.use(errorHandler);
 
