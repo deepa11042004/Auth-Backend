@@ -26,7 +26,9 @@ The BSERC (Bharat Space Education Research Centre) application platform is a com
 
 ---
 
-## 2. High-Level System Architecture
+## 2. High-Level System Architecture 
+
+![System Architecture](./Sys_architecture.svg)
 
 The project employs a **Decoupled Monolithic Architecture**, cleanly splitting a robust React-based Frontend from an Express-based REST API backend. 
 
