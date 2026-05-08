@@ -1,60 +1,120 @@
-# Backend Implementation & Execution Flow Documentation
+# Code-Aware Backend Execution & Internal Orchestration Documentation
 
-This document serves as the definitive guide to the internal execution flows, request lifecycles, service orchestration, and implementation behavior of the backend architecture. It transitions beyond high-level feature summaries to explicitly detail **how** requests move, **how** services execute, and **how** the system survives failures.
+This document provides a meticulously detailed, implementation-aware map of the backend execution flows, internal method orchestration, and data lifecycles. It is designed for senior backend engineers to understand **exactly** which functions execute, how payloads mutate, how transactions are sequenced, and how the system dynamically survives failures and reconciles state.
 
 ---
 
 ## Table of Contents
-1. [Global Request Pipeline & System Architecture](#1-global-request-pipeline--system-architecture)
-2. [Payment & Reconciliation Engine (Cross-Cutting)](#2-payment--reconciliation-engine-cross-cutting)
-3. [Workshop Registration System](#3-workshop-registration-system)
-4. [Mentor Registration System](#4-mentor-registration-system)
-5. [Internship & Summer School Systems](#5-internship--summer-school-systems)
-6. [Institutional Registration System](#6-institutional-registration-system)
-7. [Support Ticket System](#7-support-ticket-system)
-8. [User Dashboard & Progress Tracking](#8-user-dashboard--progress-tracking)
-9. [File Upload & Storage Architecture](#9-file-upload--storage-architecture)
-10. [Notification System](#10-notification-system)
+1. [Global Request Pipeline & System Orchestration](#1-global-request-pipeline--system-orchestration)
+2. [Authentication & Authorization Execution](#2-authentication--authorization-execution)
+3. [Payment & Reconciliation Engine (Core Orchestrator)](#3-payment--reconciliation-engine-core-orchestrator)
+4. [Workshop Registration Flow Details](#4-workshop-registration-flow-details)
+5. [Mentor Registration Dynamic Architecture](#5-mentor-registration-dynamic-architecture)
+6. [Internship & Summer School Execution Sequences](#6-internship--summer-school-execution-sequences)
+7. [Institutional Registration Pipeline](#7-institutional-registration-pipeline)
+8. [Support Ticket Orchestration](#8-support-ticket-orchestration)
+9. [User Dashboard Resolution Engine](#9-user-dashboard-resolution-engine)
+10. [AWS S3 & File Storage Pipelines](#10-aws-s3--file-storage-pipelines)
 
 ---
 
-## 1. Global Request Pipeline & System Architecture
+## 1. Global Request Pipeline & System Orchestration
 
-### 1.1 System Orchestration & App Pipeline
-All requests enter through `app.js`. The Express server orchestrates middleware and routing sequentially.
+### 1.1 File-to-File Execution Flow
+Every incoming HTTP request traverses a strict middleware gauntlet before hitting business logic.
 
-**Execution Flow:**
-1. **CORS & Parsers:** `cors()` allows cross-origin requests. `express.json()` parses payloads and specifically attaches `req.rawBody` for webhook verification.
-2. **Static Mounts:** `/uploads` is mapped via `express.static()` to serve local files directly.
-3. **Route Mounting:** Domain-specific routers are attached (e.g., `app.use('/auth', authRoutes)`).
-4. **Global Error Boundary:** Any unhandled exception or explicit `next(err)` triggers `errorHandler.js` at the very end of the pipeline, returning standardized JSON error responses to prevent HTML stack traces from leaking.
+```text
+app.js (Express Application Entry)
+→ cors() (Cross-Origin Resolution)
+  → express.json({ verify: appendRawBody }) (Payload Parsing & Signature Caching)
+    → Route Index (app.use('/api/...', routes))
+      → Route Specific File (e.g., workshopRoutes.js)
+        → authMiddleware.verifyToken() (JWT Decryption)
+          → multer middleware (Local/S3 Multipart Parsing)
+            → Controller (Request Extraction)
+              → Service (Business Logic / DB Writes)
+                → Controller (Response Formatting via res.json)
+                  → errorHandler.js (Global catch-all for `next(err)`)
+```
 
-### 1.2 File Interaction Flow (Global)
-`app.js` → Domain Route (e.g., `workshopRoutes.js`) → Middleware (`authMiddleware.js`) → Controller (`workshopController.js`) → Service (`workshopService.js`) → DB/Integrations (`db.js`, `razorpayService.js`) → Controller Formats Response.
+### 1.1.1 Visual Diagram (Global Middleware Pipeline)
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Express as app.js
+    participant Middleware as Auth/Multer
+    participant Controller
+    participant Service
+    participant Database
+
+    Client->>Express: HTTP Request
+    Express->>Middleware: Parse JSON / Verify Token
+    alt Token Invalid
+        Middleware-->>Client: 401 Unauthorized
+    else Token Valid
+        Middleware->>Controller: Route to Handler
+        Controller->>Service: Call Business Logic
+        Service->>Database: Execute Queries
+        Database-->>Service: Result
+        Service-->>Controller: Formatted Output
+        Controller-->>Express: JSON Response
+        Express-->>Client: HTTP 200 OK
+    end
+```
+
+### 1.2 Data Transformation Flow (Global)
+1. **Frontend Payload**: Raw JSON or `multipart/form-data`.
+2. **Controller Sanitization**: Trims inputs, normalizes cases (e.g., `email.toLowerCase().trim()`).
+3. **Service Context Injection**: Services append derived fields. Example: Calculating minor currency units `Math.round(amount * 100)` before interacting with Razorpay.
+4. **DB Payload Generation**: Objects are strictly mapped to parameterized SQL arrays (`[value1, value2]`) to prevent SQL Injection, bypassing ORMs entirely for raw query speed.
 
 ---
 
-## 2. Payment & Reconciliation Engine (Cross-Cutting)
+## 2. Authentication & Authorization Execution
 
-### 2.1 Feature Overview
-Because webhook delivery can drop, delay, or arrive out-of-order, the backend utilizes an active **Reconciliation & Polling Engine**. Instead of blindly trusting webhook receipts, the system dynamically intercepts payment attempts and proactively queries Razorpay to prevent duplicate charges.
+### 2.1 Internal Execution Tree (Login Flow)
+```text
+authController.login(req, res)
+└── authService.login(payload)
+    ├── normalizePayload() [email, password extraction]
+    ├── DB: SELECT * FROM users WHERE email = ?
+    ├── IF !user: throw 401
+    ├── IF user.is_active == 0: throw 403 (Account Disabled)
+    ├── utils/hashPassword.js -> verifyPassword(plain, hashed)
+    │   └── bcrypt.compare()
+    ├── DB: UPDATE users SET last_login = CURRENT_TIMESTAMP
+    └── utils/jwt.js -> generateToken(user)
+        └── jwt.sign({ id, email, role }, SECRET, { expiresIn })
+```
 
-### 2.2 Core Service Orchestration
-This engine is embedded across multiple services (Workshops, Mentors, Internships, Institutional).
+### 2.2 Route Protection Flow (RBAC)
+When a user accesses an admin endpoint (e.g., `POST /api/workshop-list`), the execution is intercepted:
+1. `authMiddleware.verifyToken`: Reads `Authorization: Bearer <token>`. Decodes JWT. Assigns `req.user = decoded`.
+2. `roleMiddleware` / `requireRole(['admin'])`: Reads `req.user.role`. If `role !== 'admin'`, terminates the pipeline instantly with `res.status(403)`.
 
-**Reconciliation Execution Flow (Example: `reconcilePendingWorkshopRegistration`):**
-1. System queries the DB for the user's most recent `pending` or `failed` registration attempt.
-2. If an open `razorpay_order_id` is found, the system invokes `resolvePaymentFromOrderContext(razorpayClient, orderId, paymentId)`.
-3. **Active Fetching:** `fetchPaymentFromRazorpayWithRetry` is executed. It wraps the `razorpayClient.payments.fetch()` call in a `for` loop, retrying up to 6 times with a 1200ms delay if the API fails or returns a transient state (`created`, `pending`).
-4. **Order Fallback:** If the specific `paymentId` lookup fails, it calls `resolveSuccessfulOrderPayment`, polling Razorpay for *all* payments tied to the `orderId` to hunt for a successful transaction.
-5. **Retroactive Upgrade:** If a successful payment is found, the system performs an `UPDATE` on the database row, overriding the status to `captured` or `success` and updating the `transaction_id`.
+---
 
-### 2.3 Important Internal Methods
-- `resolvePaymentFromOrderContext(client, orderId, paymentId)`: Prevents race conditions by actively querying the gateway for truth. It solves the problem of "Frontend says failed, Gateway says processing".
-- `fetchPaymentFromRazorpayWithRetry(client, paymentId)`: Polling wrapper to overcome network latency or temporary 5XX from Razorpay APIs.
+## 3. Payment & Reconciliation Engine (Core Orchestrator)
 
-### 2.4 Visual Flow Diagram (Reconciliation)
+### 3.1 Engineering Reasoning
+Webhook delivery from payment gateways (Razorpay) is unreliable. Webhooks drop, timeout, or arrive out-of-order. This backend solves the "Frontend says failed, Gateway says success" race condition by implementing a synchronous polling and reconciliation engine that executes *before* new orders are generated.
 
+### 3.2 Internal Execution Tree (Reconciliation)
+```text
+verifyPaymentAndRegister() [Service Entry]
+├── isValidRazorpaySignature(orderId, paymentId, signature)
+│   └── crypto.createHmac('sha256', secret).update().digest()
+├── fetchPaymentFromRazorpayWithRetry(client, paymentId)
+│   ├── razorpayClient.payments.fetch(paymentId)
+│   └── wait(1200ms) [Exponential/Fixed backoff loop - Max 6 Retries]
+├── resolvePaymentFromOrderContext(client, orderId, paymentId) [Fallback Lookup]
+│   └── razorpayClient.orders.fetchPayments(orderId)
+│       └── Iterates over payments to find a 'captured' status
+├── validateAmount(payment.amount, expectedAmount)
+└── executeTransaction() [DB Upsert overwriting old status]
+```
+
+### 3.2.1 Visual Flow Diagram (Reconciliation Engine)
 ```mermaid
 sequenceDiagram
     participant Frontend
@@ -63,245 +123,240 @@ sequenceDiagram
     participant Database
     participant Razorpay
 
-    Frontend->>Controller: POST /api/workshop/payment-order
-    Controller->>Service: createPaymentOrder(payload)
-    Service->>Database: Find latest pending order by email
+    Frontend->>Controller: POST /api/payment/verify
+    Controller->>Service: verifyPaymentAndRegister()
+    Service->>Database: Find latest pending order
     alt Pending Order Exists
         Service->>Razorpay: fetchPaymentFromRazorpayWithRetry(paymentId)
         Razorpay-->>Service: Payment Details
-        alt Payment is Successful
-            Service->>Database: UPDATE payment_status = 'captured'
+        alt Payment is captured
+            Service->>Database: UPDATE payment_status = 'success'
             Service-->>Controller: Return { requires_payment: false }
-            Controller-->>Frontend: Success (User already paid)
-        else Payment is Failed/Pending
-            Service->>Razorpay: orders.create(amount)
+            Controller-->>Frontend: 200 OK (Already Paid)
+        else Payment is failed
+            Service->>Razorpay: Create new order
             Razorpay-->>Service: New Order ID
         end
     else No Pending Order
-        Service->>Razorpay: orders.create(amount)
+        Service->>Razorpay: Create new order
         Razorpay-->>Service: New Order ID
     end
 ```
 
----
+### 3.3 State Transition Flow
+`payment_status` lifecycle internally mapped:
+- `pending` / `created`: Order generated via `razorpayClient.orders.create`. DB row inserted.
+- `authorized` / `captured`: Razorpay confirms payment. Backend verifies signature. The engine maps this state to `success` in local SQL tables.
+- `failed` / `cancelled`: Card declined or user abandoned.
 
-## 3. Workshop Registration System
+### 3.4 Critical Code Snippet: Secure Signature Verification
+```javascript
+function isValidRazorpaySignature({ orderId, paymentId, signature, keySecret }) {
+  // Purpose: Cryptographically prove the payment metadata was not tampered with.
+  const digest = crypto
+    .createHmac('sha256', keySecret)
+    .update(`${orderId}|${paymentId}`)
+    .digest('hex');
 
-### 3.1 Feature Overview
-Handles user enrollment into workshops, dynamically resolving pricing, checking availability, incrementing counts securely, and linking to the core payment engine.
+  const expected = Buffer.from(digest, 'hex');
+  const received = Buffer.from(signature.toLowerCase(), 'hex');
 
-### 3.2 Entry Point & Routing Flow
-**Route File:** `workshopRoutes.js`
-**Execution Flow:**
-`POST /api/workshop/register`
-1. Route intercepts request.
-2. Middleware: *None* (Open endpoint for guest registrations).
-3. `workshopRegistrationController.registerWorkshop` is invoked.
-
-### 3.3 Controller Execution Flow
-**File:** `workshopRegistrationController.js`
-1. **Extraction**: Extracts data directly from `req.body`.
-2. **Delegation**: Calls `workshopRegistrationService.verifyPaymentAndRegister(req.body)`.
-3. **Response Formatting**: Maps the returned object to HTTP status codes (`res.status(result.status).json(result.body)`).
-
-### 3.4 Service Execution Flow
-**File:** `workshopRegistrationService.js`
-1. **Data Normalization:** Extracts `workshopId`, parses fees, standardizes email casing.
-2. **Validation:** Executes DB query `getWorkshopById` to ensure workshop exists and fetch its official fee.
-3. **Signature Verification:** Calls `isValidRazorpaySignature` using `crypto.createHmac`. Validates `orderId + "|" + paymentId` against `RAZORPAY_KEY_SECRET`.
-4. **Amount Verification:** Calls Razorpay to fetch the order and asserts that the `amount` paid exactly matches the expected workshop fee.
-5. **Database Transaction Insertion:** Calls `insertWorkshopRegistrationRecord`. Due to ongoing schema migrations, it employs a sophisticated fallback sequence:
-   - Tries inserting with `country` and `payment` columns.
-   - Falls back to dropping `country`.
-   - Falls back to legacy columns if schema updates aren't live.
-6. **Enrollment Counter:** Calls `incrementWorkshopEnrollmentCounter`. Uses atomic SQL (`SET total_enrollments = COALESCE(total_enrollments, 0) + 1`) to prevent race conditions.
-7. **User Auto-Provisioning:** Calls `createWorkshopUserIfMissing`. If the email isn't in the `users` table, a shadow account is generated, hashing the phone number as a temporary password.
-
-### 3.5 Database Execution Flow
-- **Reads:** `workshop_list` (check existence), `workshop_registrations` (check duplicates), `users` (check existing account).
-- **Writes:** `workshop_registrations` (INSERT new), `workshop_list` (UPDATE enrollment count atomic), `users` (INSERT shadow account).
-- **Integrity:** Duplicate insertions handled gracefully by intercepting `ER_DUP_ENTRY` error codes.
+  // Uses timingSafeEqual to prevent CPU timing side-channel attacks.
+  if (expected.length !== received.length) return false;
+  return crypto.timingSafeEqual(expected, received);
+}
+```
 
 ---
 
-## 4. Mentor Registration System
+## 4. Workshop Registration Flow Details
 
-### 4.1 Feature Overview
-Allows professionals to register as mentors with dynamic pricing based on nationality (INR vs USD). Highly complex payload structure with file uploads.
+### 4.1 File-to-File Execution Flow
+`workshopRoutes.js` → `workshopRegistrationController.registerWorkshop` → `workshopRegistrationService.verifyPaymentAndRegister(data)` → `razorpayService` (Verification) → DB Transaction Engine → `notificationService` (Async Execution).
 
-### 4.2 Entry Point & Routing Flow
-**Route:** `POST /api/mentor-registration/register`
-**Execution Flow:**
-`mentorRoutes.js` → `mentorRegistrationUpload.fields(...)` (Multer S3/Local Middleware) → `mentorRegistrationController.registerMentor()`
+### 4.2 Database Write Sequencing & Transaction Boundaries
+The entire registration sequence is wrapped in a strict transactional boundary to prevent orphaned payments without enrollments.
+**Exact Sequence:**
+1. `await connection.beginTransaction()`
+2. **Write 1:** `INSERT INTO workshop_registrations ...` (If fails due to bad schema, falls back to legacy columns).
+3. **Write 2:** `UPDATE workshop_list SET total_enrollments = COALESCE(total_enrollments, 0) + 1 WHERE id = ?` (Atomic increment prevents race conditions compared to reading count in Node and adding 1).
+4. **Write 3:** `INSERT INTO users ...` (If `createWorkshopUserIfMissing` detects no existing account, generates shadow account with hashed phone number).
+5. `await connection.commit()`
+*Rollback Behavior:* If any query fails (e.g., duplicate unique key constraint `ER_DUP_ENTRY`), `connection.rollback()` is executed, preventing the enrollment counter from incrementing falsely.
 
-### 4.3 Service Execution Flow
-**File:** `mentorRegistrationService.js`
-1. **Transaction Initialization**: Opens a dedicated DB transaction `await connection.beginTransaction()`.
-2. **Schema Reflection**: Calls `getMentorTableColumns()`, which executes a `SHOW COLUMNS` query. This allows the backend to dynamically build SQL `UPDATE`/`INSERT` statements only for fields that currently exist in the database, ensuring zero downtime during column migrations.
-3. **Upsert Logic (`upsertMentorRegistration`)**:
-   - Queries `findMentorByEmail`.
-   - If found, checks `isCompletedPaymentStatus`. If true, rejects update.
-   - If not completed, dynamically generates an `UPDATE` statement via `getMentorWritableColumns`, injecting `COALESCE` for files (resume, photo) to preserve existing uploads if none are provided.
-   - If not found, generates a dynamic `INSERT`.
-4. **Commit/Rollback**: Commits transaction. If any error occurs, triggers `connection.rollback()` to prevent orphaned metadata.
+### 4.2.1 Visual Execution Diagram (Workshop DB Transaction)
+```mermaid
+sequenceDiagram
+    participant Service
+    participant Database
 
-### 4.4 External Service Execution Flow
-- **AWS S3 via Multer**: `mentorRegistrationUpload.js` parses the `multipart/form-data`, streams `resume` and `profile_photo` to AWS S3 or local disk, and attaches URLs to `req.files`.
-- **Razorpay**: Currency is dynamically switched (`INR` or `USD`) depending on the `nationality` field before invoking `razorpayClient.orders.create`.
+    Service->>Database: BEGIN Transaction
+    Service->>Database: INSERT workshop_registrations
+    alt Insert Succeeds
+        Service->>Database: UPDATE workshop_list (total_enrollments + 1)
+        Service->>Database: INSERT users (Shadow account)
+        Service->>Database: COMMIT
+        Database-->>Service: Transaction Finalized
+    else ER_DUP_ENTRY / Failure
+        Service->>Database: ROLLBACK
+        Database-->>Service: Data Reverted
+    end
+```
 
----
-
-## 5. Internship & Summer School Systems
-
-### 5.1 Feature Overview
-Complex multi-tier registration. Internships feature dynamic pricing based on categories (General, Lateral, EWS).
-
-### 5.2 Service Execution Flow (`internshipRegistrationService.js`)
-1. **Schema Check**: Calls `ensureInternshipFeeSettingsSchema`. If the `summer_internship_fee_settings` table doesn't exist, it executes a `CREATE TABLE IF NOT EXISTS` and populates default pricing.
-2. **Fee Resolution**: `getApplicableInternshipFeeRupees` computes the fee dynamically based on `is_lateral` and `category` (General vs EWS).
-3. **Transaction Context**:
-   - Begins DB transaction.
-   - Attempts `createInternshipRegistrationRecord`.
-   - **Failure Handling**: If `ER_DUP_ENTRY` occurs (user already attempted registration), it catches the error and executes an `UPDATE` to replace the old failed payment ID with the new one, *reusing* the row instead of blocking the user.
-   - Commits transaction.
-
-### 5.3 Security & Failure Handling
-- **Duplicate Prevention**: Intercepts `ER_DUP_ENTRY` at the DB driver layer.
-- **Dynamic Schema Defense**: Automatically adds missing columns (like `ews_lateral_fee_rupees`) via `ALTER TABLE` if they are detected as missing during startup/execution.
+### 4.3 Engineering Reasoning: Fallback Insertion
+`insertWorkshopRegistrationRecord` wraps `connection.query` in `try/catch` blocks inspecting `err.code === 'ER_BAD_FIELD_ERROR'`.
+**Why?** During live CI/CD deployments, the Node server restarts faster than heavy database migrations execute. This fallback mechanism ensures zero downtime by elegantly falling back to legacy schema structures if new columns (`country`, `payment_currency`) are not yet present in production databases.
 
 ---
 
-## 6. Institutional Registration System
+## 5. Mentor Registration Dynamic Architecture
 
-### 6.1 Feature Overview
-Allows institutions to partner, processing high-value transactions dynamically routed by country.
+### 5.1 Payload & Data Transformation Flow
+The Mentor payload is massive (40+ properties).
+1. **Frontend Payload**: Contains mixed data (strings, objects, files) wrapped in `FormData`.
+2. **Controller**: Normalizes missing numeric inputs to `null` to prevent strict SQL constraint errors.
+3. **Service Matrix Routing**: Nationality (`Indian` vs `Others`) redirects the payment config to 1000 INR vs 150 USD dynamically.
 
-### 6.2 Service Execution Flow (`institutionalRegistrationService.js`)
-1. **Payment Config Resolution**: Checks `country`. If India, fee is 2500 INR. Otherwise, 500 USD.
-2. **Upsert Strategy (`upsertInstitutionalAttempt`)**:
-   - Uses `findLatestOpenInstitutionalAttempt` mapping by `email`, `institute_name`, and `head_email`.
-   - Opens DB transaction.
-   - Updates the existing pending row with new Razorpay IDs, or Inserts a new one.
-3. **Webhook/Callback Verification**: Validates the signature, ensures `amount` matches the resolved `paymentConfig.amount` strictly, preventing payload tampering.
+### 5.2 Internal Execution Tree (Dynamic DB Reflection)
+```text
+upsertMentorRegistration()
+├── DB: SHOW COLUMNS FROM mentor_registrations (via getMentorTableColumns)
+├── Filter payload keys against actual DB columns
+├── findMentorByEmail()
+├── IF completed_payment: Throw Error (Immutable override blocked)
+├── IF exists & pending:
+│   ├── Generate Dynamic SQL: `UPDATE mentor_registrations SET bio = ?, track = ? ...`
+│   └── Execute UPDATE
+└── IF missing:
+    ├── Generate Dynamic SQL: `INSERT INTO mentor_registrations (bio, track...) VALUES (?, ?...)`
+    └── Execute INSERT
+```
 
----
-
-## 7. Support Ticket System
-
-### 7.1 Feature Overview
-Internal help desk supporting categorized tickets, admin replies, attachments, and email notifications.
-
-### 7.2 Routing & Controller Flow
-Protected routes.
-`GET /api/tickets/my-tickets` → `authMiddleware.verifyToken` → `ticketController.listUserTickets`
-`POST /api/tickets/admin/reply/:id` → `authMiddleware.verifyToken` → `requireRole(['admin'])` → `ticketController.addTicketReplyByAdmin`
-
-### 7.3 Service Execution Flow (`ticketService.js`)
-1. **Creation**: `createTicket` validates payload lengths.
-2. **Relational Lookup**: Invokes `resolveWorkshopTitle(workshopId)` securely to append context for the email template.
-3. **Multi-Table Insertion**:
-   - `INSERT INTO support_tickets` -> Retrieves `insertId`.
-   - `INSERT INTO ticket_messages` -> Logs the initial user description as the first message payload.
-4. **Asynchronous Orchestration**:
-   - Calls `notificationService.sendTicketCreatedEmail` asynchronously without `await` to prevent blocking the HTTP response.
-   - Uses `void` keyword to explicitly ignore the floating promise.
-
-### 7.4 Database Execution Flow
-- **Relational Aggregation**: `listUserTickets` uses complex SQL `LEFT JOIN` on `workshop_list` and `users` combined with a correlated subquery `(SELECT tm.message FROM ticket_messages tm ... LIMIT 1) AS last_message` to fetch the ticket list efficiently in a single round trip.
+### 5.3 Engineering Reasoning: Dynamic Schema Adaptation
+By using `SHOW COLUMNS` to dynamically construct `INSERT`/`UPDATE` statements (`getMentorWritableColumns`), the backend ensures it never throws a `Column not found` error if the frontend sends a new field before the backend DB migration has completed. It silently drops unknown fields.
 
 ---
 
-## 8. User Dashboard & Progress Tracking
+## 6. Internship & Summer School Execution Sequences
 
-### 8.1 Feature Overview
-Aggregates user data, enrolled workshops, completion tracking, and automatic certificate issuance.
+### 6.1 Real Function Orchestration
+- `ensureInternshipFeeSettingsSchema()`: Called before every price lookup. Executes `CREATE TABLE IF NOT EXISTS summer_internship_fee_settings` and automatically seeds it with default pricing matrices (General, Lateral, EWS).
+- `getApplicableInternshipFeeRupees()`: Analyzes payload booleans (`is_lateral: true`) and strings (`category: 'General'`) to map to the correct dynamic DB column (`lateral_fee_rupees`).
 
-### 8.2 Service Execution Flow (`userDashboardService.js`)
-1. **Progress Inference Engine (`clampProgress` & mapping)**:
-   - Maps raw DB rows to frontend states.
-   - If explicit progress exists in `user_workshop_progress`, it relies on it.
-   - **Fallback Logic**: If the user has a successful payment but 0 tracked progress, the backend automatically infers `20%` progress to initialize their dashboard state logically.
-2. **Resilient Query Engine (`fetchUserWorkshopRows`)**:
-   - Executes `buildWorkshopRowsQuery`.
-   - Implements a 4-stage fallback array trying combinations of `includePaymentColumns` and `includeAlternativeEmail`.
-   - It iterates over these queries, catching `ER_BAD_FIELD_ERROR`. This ensures that even if a database migration failed halfway, the dashboard still loads.
-3. **Certificate Generation**:
-   - `getCertificates` filters enrolled workshops.
-   - Rules: `workshop.status === 'completed'` OR `progress_percent >= 80`.
-   - Dynamically constructs a `preview_url` routing through `/api/workshop-list/:id/certificate` which proxies S3/Local assets securely.
+### 6.2 Failure & Fallback Execution Chains (Duplicate Row Reuse)
+**Problem:** A user tries to pay, closes the popup, and tries again. An `INSERT` would trigger a Unique Constraint violation (`ER_DUP_ENTRY`) on their email.
+**Fallback Chain (`registerInternshipInternal`):**
+1. Attempt `INSERT`.
+2. Catch `err.code === 'ER_DUP_ENTRY'`.
+3. Instead of failing the request, the backend automatically runs `UPDATE summer_internship_registrations SET razorpay_order_id = ? WHERE email = ? AND payment_status != 'success'`.
+4. The system transparently repairs the DB state and allows the user to attempt payment again seamlessly.
 
----
-
-## 9. File Upload & Storage Architecture
-
-### 9.1 File Interaction & Processing
-Uses a dual-storage strategy managed by Middleware.
-
-**1. Local Storage Flow (e.g., `workshopImageUpload.js`)**
-- `multer.diskStorage` points to `./uploads/workshops`.
-- Filters via `fileFilter` rejecting non-image MIME types.
-- Passes `req.files.thumbnail[0]` to the controller which saves the relative `/uploads/...` URL.
-
-**2. S3 Integration Flow (`s3StorageService.js`)**
-- AWS S3 SDK v3 (`@aws-sdk/client-s3`) is instantiated globally as `cachedClient`.
-- **Upload (`uploadInternshipPassportPhoto`)**:
-  - Uses `PutObjectCommand`.
-  - Generates secure S3 Keys: `internships/{internshipSlug}/{year}/{emailSlug}/passport-photo/{timestamp}-{randomHex}{extension}` preventing collisions.
-- **Retrieval (`getPresignedObjectUrl`)**:
-  - Uses `@aws-sdk/s3-request-presigner`.
-  - Parses `s3://bucket/key` formats, invokes `GetObjectCommand`, and generates a temporary URL expiring in `300` seconds by default.
-
----
-
-## 10. Notification System
-
-### 10.1 Internal Execution & Service Orchestration
-**File:** `notificationService.js`
-1. **Singleton Transporter**: `getTransporter()` initializes `nodemailer` once and caches it to prevent TCP connection overhead per request.
-2. **Concurrent Execution**: `sendTicketCreatedEmail` builds an array of async tasks (`mailTasks.push(...)`) mapping emails to users and system admins concurrently.
-3. **Settlement**: Executes `await Promise.allSettled(mailTasks)`. This ensures that if the admin email fails, the user email still processes.
-4. **Fault Tolerance**: The root `sendMail` function catches all errors explicitly `catch (err) { return { sent: false } }`, ensuring SMTP downtime never breaks critical application flows like registration or payment verification.
-
----
-
-## 11. Security Execution Flow
-
-1. **Authentication Interception**: `authMiddleware.verifyToken` intercepts protected routes, extracts `Bearer <token>`, decodes via `jwt.verify()`, and injects `req.user`.
-2. **RBAC**: `roleMiddleware` intercepts admin routes, validating `req.user.role === 'admin'`. Throws `403 Forbidden` if missing.
-3. **Data Integrity**: All DB services use Parameterized Queries `(?, ?, ?)` preventing SQL injection globally.
-4. **Payload Trust**: The backend never trusts the frontend for `amount` or `payment status`. It dynamically re-fetches workshop costs from `workshop_list` and compares it directly with the Razorpay payload via secure HMAC-SHA256 signature verification.
-
----
-
-## 12. Visual Request Lifecycle Diagram (Registration + Payment)
+### 6.3 Visual Execution Diagram (Internship Fallback Flow)
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant Route
-    participant Controller
     participant Service
     participant Database
-    participant ExternalGateway
 
-    User->>Route: POST /api/register (Payload)
-    Route->>Controller: Invokes registerWorkshop()
-    Controller->>Service: verifyPaymentAndRegister(data)
-    Service->>Database: getWorkshopById(id)
-    Database-->>Service: Validates Workshop & Expected Fee
-    Service->>Service: isValidRazorpaySignature()
-    alt Signature Invalid
-        Service-->>Controller: status: 400
-        Controller-->>User: "Invalid payment signature"
-    else Signature Valid
-        Service->>ExternalGateway: fetchPaymentFromRazorpayWithRetry()
-        ExternalGateway-->>Service: Validates Payment Amount & Currency
-        Service->>Database: BEGIN Transaction
-        Service->>Database: insertWorkshopRegistrationRecord()
-        Service->>Database: incrementWorkshopEnrollmentCounter()
-        Service->>Database: createWorkshopUserIfMissing()
-        Service->>Database: COMMIT Transaction
-        Service-->>Controller: status: 201
-        Controller-->>User: "Registration Successful"
+    User->>Service: Verify Payment & Register
+    Service->>Database: BEGIN Transaction
+    Service->>Database: INSERT registration
+    alt Success
+        Database-->>Service: OK
+    else ER_DUP_ENTRY
+        Database-->>Service: Duplicate Entry Error
+        Service->>Database: Find existing row by Email
+        alt Existing Row == 'success'
+            Service-->>User: "Already registered" (Blocks override)
+        else Existing Row == 'pending' / 'failed'
+            Service->>Database: UPDATE row with new Razorpay Order IDs
+            Database-->>Service: OK (Row Recycled)
+        end
     end
+    Service->>Database: COMMIT Transaction
+    Service-->>User: 201 Created
 ```
+
+---
+
+## 7. Institutional Registration Pipeline
+
+### 7.1 Database Write Sequencing
+1. **Context Lookup**: `findLatestOpenInstitutionalAttempt()` scans for open orders using compound SQL filtering (`email`, `institute_name`, `head_email`).
+2. **Upsert Engine** (`upsertInstitutionalAttempt`):
+   - Opens DB transaction.
+   - If an open attempt is found, executes `UPDATE institutional_registrations`.
+   - Replaces `payment_status`, `razorpay_order_id`, and explicitly maps the `failure_reason` if the Razorpay webhook reported a declined card or bank issue.
+
+### 7.2 Data Transformation Flow
+- `country` field dictates currency logic.
+- `toMoneyInMinorUnits(value)` ensures safe floating-point conversion, dodging JS math errors: `Math.round(numeric * 100)`.
+- **Security Check**: A currency mismatch assertion prevents a malicious user from bypassing UI restrictions to pay 500 INR instead of 500 USD: `if (paymentCurrency !== paymentConfig.currency) throw Error`.
+
+---
+
+## 8. Support Ticket Orchestration
+
+### 8.1 File-to-File Flow
+`ticketRoutes.js` → `ticketController.js` → `ticketService.js` → (Async) `notificationService.js` (via `nodemailer`).
+
+### 8.2 Internal Execution Tree
+```text
+ticketController.createTicket()
+└── ticketService.createTicket()
+    ├── normalizeTicketCategory(payload.category)
+    ├── resolveWorkshopTitle(workshopId) [Optional DB Join Context]
+    ├── DB: INSERT support_tickets (Retrieves insertId)
+    ├── DB: INSERT ticket_messages (Logs initial text as first message)
+    └── void notificationService.sendTicketCreatedEmail() [Async Fire-and-Forget]
+```
+
+### 8.3 Engineering Reasoning: Async Void Execution
+The email trigger explicitly does **not** use `await` at the top level.
+**Why?** Web request latency must not be bottlenecked by slow SMTP connection handshakes. By floating the promise (`void`), the user receives a rapid `201 Created` HTTP response while the email dispatch processes entirely in the background Node event loop. If the email fails, a robust `try/catch` inside `notificationService.js` absorbs the error, ensuring the application does not crash.
+
+---
+
+## 9. User Dashboard Resolution Engine
+
+### 9.1 Data Transformation Flow (Inferred Progress)
+The Dashboard serves as an aggregator. If a user has paid for a workshop but hasn't started course modules, the backend dynamically infers progress so the UI doesn't look empty.
+**Flow (`clampProgress` & mapping):**
+1. Read raw DB row from `user_workshop_progress`.
+2. If `progress_percent > 0`, trust DB.
+3. **Fallback Logic**: If `progress_percent === 0` BUT `payment_status === 'success'`, backend auto-assigns `inferredProgress = 20` (20%).
+4. Translates status string (`ongoing`, `completed`, `not-started`) dynamically based on inferred progress numbers.
+
+### 9.2 Fallback Execution Chains (Query Permutations)
+The method `fetchUserWorkshopRows` is an engineering marvel for handling incomplete database migrations seamlessly.
+**Flow:**
+It defines an array of 4 SQL queries:
+1. Try fetching with `payment_columns` AND `alternative_email`.
+2. Try fetching with `payment_columns` NO `alternative_email`.
+3. Try fetching with NO `payment_columns` AND `alternative_email`.
+4. Try fetching with NO `payment_columns` NO `alternative_email`.
+
+It loops over these queries sequentially. If `connection.query` throws `ER_BAD_FIELD_ERROR`, it catches it and moves to the next query. This ensures the user dashboard **always loads**, gracefully degrading the data payload if the database schema is outdated.
+
+---
+
+## 10. AWS S3 & File Storage Pipelines
+
+### 10.1 File-to-File Orchestration
+`multer` (Memory/Disk Middleware) → `internshipRegistrationController` → `s3StorageService.uploadInternshipPassportPhoto` → `AWS S3 SDK (PutObjectCommand)`.
+
+### 10.2 Internal Function Reference
+`buildInternshipPassportPhotoKey(internshipSlug, email, originalFilename)`
+- **Purpose**: Generates cryptographically isolated S3 Object Keys.
+- **Data Transformation**:
+  - `emailSlug = cleanText(email).replace(/[^a-z0-9]/gi, '_')`
+  - `randomHex = crypto.randomBytes(4).toString('hex')`
+  - `timestamp = Date.now()`
+  - **Output Sequence**: `internships/2026/summer-school/user_gmail_com/passport-photo/1715000000-8f92a1.jpg`
+- **Security Implications**: Prevents Object ID enumeration attacks. Ensures file collisions are mathematically impossible, completely avoiding accidental overrides by users uploading files with generic names (e.g., `resume.pdf`).
+
+### 10.3 External Service Flow (Presigned URLs)
+- **Retrieval**: Controllers map raw DB keys by invoking `s3StorageService.getPresignedObjectUrl(key)`.
+- The AWS SDK v3 calculates a signed query string using the IAM assumed role via `@aws-sdk/s3-request-presigner`.
+- The URL is configured to expire dynamically in exactly `300` seconds. This ensures assets remain strictly private, preventing web scrapers from leeching S3 bucket bandwidth.
