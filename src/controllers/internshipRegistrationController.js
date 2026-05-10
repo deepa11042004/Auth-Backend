@@ -74,6 +74,8 @@ async function getInternshipRegistrations(req, res, next) {
       registrationType: req.query.registrationType,
       paymentStatus: req.query.paymentStatus,
       emailSearch: req.query.emailSearch,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
     });
     return res.status(result.status).json(result.body);
   } catch (err) {
