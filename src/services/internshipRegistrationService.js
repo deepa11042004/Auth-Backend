@@ -1322,9 +1322,6 @@ async function getInternshipRegistrations(options = {}) {
   const registrationType = String(options.registrationType || '').trim().toLowerCase();
   const paymentStatus = String(options.paymentStatus || '').trim().toLowerCase();
   const emailSearch = String(options.emailSearch || '').trim().toLowerCase();
-  const startDate = String(options.startDate || '').trim();
-  const endDate = String(options.endDate || '').trim();
-  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
   const whereClauses = [];
   const whereParams = [];
@@ -1343,16 +1340,6 @@ async function getInternshipRegistrations(options = {}) {
   if (emailSearch) {
     whereClauses.push('LOWER(email) LIKE ?');
     whereParams.push(`%${emailSearch}%`);
-  }
-
-  if (startDate && datePattern.test(startDate)) {
-    whereClauses.push('DATE(created_at) >= ?');
-    whereParams.push(startDate);
-  }
-
-  if (endDate && datePattern.test(endDate)) {
-    whereClauses.push('DATE(created_at) <= ?');
-    whereParams.push(endDate);
   }
 
   const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
