@@ -40,6 +40,10 @@ const options = {
         description: 'Mentor registration and profile endpoints',
       },
       {
+        name: 'Advisory',
+        description: 'Advisory board application and moderation endpoints',
+      },
+      {
         name: 'Internships',
         description: 'Summer internship application and payment endpoints',
       },
