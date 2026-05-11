@@ -70,6 +70,7 @@ async function getInternshipRegistrations(req, res, next) {
     const result = await internshipRegistrationService.getInternshipRegistrations({
       page: req.query.page,
       pageSize: req.query.pageSize,
+      exportAll: req.query.exportAll,
       registrationType: req.query.registrationType,
       paymentStatus: req.query.paymentStatus,
       emailSearch: req.query.emailSearch,

@@ -1310,13 +1310,14 @@ async function getInternshipApplicationById(id, connection = db) {
 }
 
 async function getInternshipRegistrations(options = {}) {
+  const isExportAll = options.exportAll === true || options.exportAll === 'true';
   const page = Number(options.page) || 1;
   const pageSize = Number(options.pageSize) || 50;
   const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
-  const safePageSize = Number.isFinite(pageSize) && pageSize > 0
-    ? Math.min(Math.floor(pageSize), 200)
-    : 50;
-  const offset = (safePage - 1) * safePageSize;
+  const safePageSize = isExportAll
+    ? null
+    : (Number.isFinite(pageSize) && pageSize > 0 ? Math.min(Math.floor(pageSize), 200) : 50);
+  const offset = isExportAll ? 0 : (safePage - 1) * safePageSize;
 
   const registrationType = String(options.registrationType || '').trim().toLowerCase();
   const paymentStatus = String(options.paymentStatus || '').trim().toLowerCase();
@@ -1377,8 +1378,8 @@ async function getInternshipRegistrations(options = {}) {
      FROM ${INTERNSHIP_TABLE}
      ${whereSql}
      ORDER BY created_at DESC, id DESC
-     LIMIT ? OFFSET ?`,
-    [...whereParams, safePageSize, offset]
+     ${isExportAll ? '' : 'LIMIT ? OFFSET ?'}`,
+    isExportAll ? [...whereParams] : [...whereParams, safePageSize, offset]
   );
 
   const [countRows] = await db.query(
@@ -1389,7 +1390,8 @@ async function getInternshipRegistrations(options = {}) {
   );
 
   const total = Number(countRows?.[0]?.total || 0);
-  const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+  const effectivePageSize = isExportAll ? total || 1 : safePageSize;
+  const totalPages = Math.max(1, Math.ceil(total / effectivePageSize));
 
   return {
     status: 200,
