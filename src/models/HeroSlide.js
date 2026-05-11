@@ -25,6 +25,22 @@ const HERO_OPTIONAL_COLUMNS = Object.freeze([
     name: 'secondary_cta_link',
     definition: 'TEXT NULL AFTER secondary_cta_text',
   },
+  {
+    name: 'media_path',
+    definition: 'VARCHAR(1024) NULL AFTER media_mime_type',
+  },
+  {
+    name: 'media_file_name',
+    definition: 'VARCHAR(255) NULL AFTER media_path',
+  },
+  {
+    name: 'media_storage',
+    definition: "ENUM('blob', 's3', 'hybrid') NOT NULL DEFAULT 'blob' AFTER media_file_name",
+  },
+  {
+    name: 'migrated_from_blob',
+    definition: 'TINYINT(1) NOT NULL DEFAULT 0 AFTER media_storage',
+  },
 ]);
 
 function cleanText(value) {
@@ -122,14 +138,14 @@ function normalizeHeroSlidePayload(input = {}, options = {}) {
   const mediaData = file && Buffer.isBuffer(file.buffer) ? file.buffer : null;
   const mediaMimeType = toNullableText(file ? file.mimetype : null);
 
+  // media_data intentionally excluded — service uploads to S3 and sets media_path
   const payload = {
     title: cleanText(input.title),
     subtitle: toNullableText(input.subtitle),
     description: toNullableText(input.description),
     badge_text: toNullableText(input.badge_text || input.badgeText),
     media_type: mediaType || null,
-    media_data: mediaData,
-    media_mime_type: mediaData ? mediaMimeType : null,
+    media_mime_type: file ? mediaMimeType : null,
     cta_text: toNullableText(input.cta_text || input.ctaText),
     cta_link: toNullableText(input.cta_link || input.ctaLink),
     secondary_cta_text: toNullableText(
@@ -144,11 +160,11 @@ function normalizeHeroSlidePayload(input = {}, options = {}) {
 
   const errors = [];
 
-  if (payload.media_data && !payload.media_type) {
+  if (file && !payload.media_type) {
     errors.push('media_type must be image or video when media file is uploaded');
   }
 
-  if (payload.media_data && !payload.media_mime_type) {
+  if (file && !payload.media_mime_type) {
     errors.push('media MIME type is required when media file is uploaded');
   }
 
@@ -168,14 +184,14 @@ function normalizeHeroSlidePayload(input = {}, options = {}) {
     }
   }
 
-  if (payload.media_data && payload.media_type === HERO_MEDIA_TYPES.IMAGE) {
-    if (payload.media_data.length > IMAGE_MAX_BYTES) {
+  if (file && payload.media_type === HERO_MEDIA_TYPES.IMAGE) {
+    if (file.buffer.length > IMAGE_MAX_BYTES) {
       errors.push('image media exceeds 2MB limit');
     }
   }
 
-  if (payload.media_data && payload.media_type === HERO_MEDIA_TYPES.VIDEO) {
-    if (payload.media_data.length > VIDEO_MAX_BYTES) {
+  if (file && payload.media_type === HERO_MEDIA_TYPES.VIDEO) {
+    if (file.buffer.length > VIDEO_MAX_BYTES) {
       errors.push('video media exceeds 20MB limit');
     }
   }
@@ -251,7 +267,7 @@ function normalizeHeroSlideUpdatePayload(input = {}, options = {}) {
   if (file) {
     const resolvedMediaType = normalizeMediaType(explicitMediaType, file);
     const mediaMimeType = toNullableText(file.mimetype);
-    const mediaData = Buffer.isBuffer(file.buffer) ? file.buffer : null;
+    // media_data not written — service uploads to S3 and sets media_path
 
     if (!resolvedMediaType) {
       errors.push('media_type is required and must be image or video');
@@ -259,10 +275,8 @@ function normalizeHeroSlideUpdatePayload(input = {}, options = {}) {
       updates.media_type = resolvedMediaType;
     }
 
-    if (!mediaData) {
+    if (!Buffer.isBuffer(file.buffer)) {
       errors.push('media file is invalid');
-    } else {
-      updates.media_data = mediaData;
     }
 
     if (!mediaMimeType) {
@@ -283,14 +297,14 @@ function normalizeHeroSlideUpdatePayload(input = {}, options = {}) {
       }
     }
 
-    if (mediaData && resolvedMediaType === HERO_MEDIA_TYPES.IMAGE) {
-      if (mediaData.length > IMAGE_MAX_BYTES) {
+    if (file.buffer && resolvedMediaType === HERO_MEDIA_TYPES.IMAGE) {
+      if (file.buffer.length > IMAGE_MAX_BYTES) {
         errors.push('image media exceeds 2MB limit');
       }
     }
 
-    if (mediaData && resolvedMediaType === HERO_MEDIA_TYPES.VIDEO) {
-      if (mediaData.length > VIDEO_MAX_BYTES) {
+    if (file.buffer && resolvedMediaType === HERO_MEDIA_TYPES.VIDEO) {
+      if (file.buffer.length > VIDEO_MAX_BYTES) {
         errors.push('video media exceeds 20MB limit');
       }
     }
@@ -426,6 +440,9 @@ async function createHeroSlide(payload, connection = db) {
     'media_type',
     'media_data',
     'media_mime_type',
+    'media_path',
+    'media_file_name',
+    'media_storage',
     'cta_text',
     'cta_link',
     'secondary_cta_text',
@@ -440,8 +457,11 @@ async function createHeroSlide(payload, connection = db) {
     payload.description,
     payload.badge_text,
     payload.media_type,
-    payload.media_data,
+    null, // media_data — always NULL for new S3 uploads
     payload.media_mime_type,
+    payload.media_path || null,
+    payload.media_file_name || null,
+    payload.media_storage || 's3',
     payload.cta_text,
     payload.cta_link,
     payload.secondary_cta_text,
@@ -468,8 +488,10 @@ async function updateHeroSlideById(id, updates, connection = db) {
     'description',
     'badge_text',
     'media_type',
-    'media_data',
     'media_mime_type',
+    'media_path',
+    'media_file_name',
+    'media_storage',
     'cta_text',
     'cta_link',
     'secondary_cta_text',
@@ -527,7 +549,7 @@ async function getHeroSlides(options = {}, connection = db) {
        FROM ${HERO_SLIDE_TABLE}
        WHERE is_active = 1
          AND media_type IN ('image', 'video')
-         AND media_data IS NOT NULL
+         AND (media_data IS NOT NULL OR media_path IS NOT NULL)
          AND media_mime_type IS NOT NULL
        ORDER BY position ASC, id ASC`
     )
@@ -560,6 +582,9 @@ async function getHeroSlideMediaById(id, connection = db) {
             media_data,
             media_mime_type,
             media_type,
+            media_path,
+            media_storage,
+            migrated_from_blob,
             is_active
      FROM ${HERO_SLIDE_TABLE}
      WHERE id = ?
@@ -577,6 +602,9 @@ async function getHeroSlideMediaById(id, connection = db) {
     media_data: Buffer.isBuffer(row.media_data) ? row.media_data : null,
     media_mime_type: toNullableText(row.media_mime_type),
     media_type: cleanText(row.media_type),
+    media_path: toNullableText(row.media_path),
+    media_storage: cleanText(row.media_storage) || 'blob',
+    migrated_from_blob: Number(row.migrated_from_blob) === 1,
     is_active: Number(row.is_active) === 1,
   };
 }

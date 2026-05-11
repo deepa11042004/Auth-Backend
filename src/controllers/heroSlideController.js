@@ -1,4 +1,5 @@
 const heroSlideService = require('../services/heroSlideService');
+const { streamHeroSlideMedia } = require('../services/s3StorageService');
 
 async function createAdminHeroSlide(req, res, next) {
   try {
@@ -48,13 +49,41 @@ async function getHeroSlideMedia(req, res, next) {
       return res.status(result.status).json(result.body);
     }
 
-    const mimeType = result.media.media_mime_type || 'application/octet-stream';
+    const { media } = result;
+    const mimeType = media.media_mime_type || 'application/octet-stream';
+
+    // Try S3 first when a media_path is stored
+    if (media.media_path) {
+      try {
+        const { buffer, contentType } = await streamHeroSlideMedia({ s3Path: media.media_path });
+
+        res.setHeader('Content-Type', contentType || mimeType);
+        res.setHeader('Content-Length', String(buffer.length));
+        res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
+        res.setHeader('X-Media-Source', 's3');
+
+        return res.status(200).send(buffer);
+      } catch (s3Err) {
+        // S3-only rows have no blob fallback — surface the error
+        if (media.media_storage === 's3') {
+          return next(s3Err);
+        }
+
+        // Hybrid/blob rows fall through to blob below
+      }
+    }
+
+    // Blob fallback (legacy rows or hybrid rows when S3 is unreachable)
+    if (!media.media_data) {
+      return res.status(404).json({ success: false, message: 'Hero media not found' });
+    }
 
     res.setHeader('Content-Type', mimeType);
-    res.setHeader('Content-Length', String(result.media.media_data.length));
+    res.setHeader('Content-Length', String(media.media_data.length));
     res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=600');
+    res.setHeader('X-Media-Source', 'blob');
 
-    return res.status(200).send(result.media.media_data);
+    return res.status(200).send(media.media_data);
   } catch (err) {
     return next(err);
   }

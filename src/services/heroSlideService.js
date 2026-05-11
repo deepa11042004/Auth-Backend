@@ -1,4 +1,8 @@
 const HeroSlide = require('../models/HeroSlide');
+const {
+  uploadHeroSlideMedia,
+  deleteHeroSlideMedia,
+} = require('./s3StorageService');
 
 function parseHeroSlideId(rawId) {
   const parsed = Number.parseInt(String(rawId || ''), 10);
@@ -35,6 +39,28 @@ async function createAdminHeroSlide(payload, file) {
       },
     };
   }
+
+  if (!file || !Buffer.isBuffer(file.buffer)) {
+    return {
+      status: 400,
+      body: {
+        success: false,
+        message: 'A media file is required to create a hero slide.',
+      },
+    };
+  }
+
+  // Upload to S3 first — use a temporary key without slide id, will be correct on re-upload
+  const uploadResult = await uploadHeroSlideMedia({
+    buffer: file.buffer,
+    mimeType: file.mimetype,
+    originalName: file.originalname,
+    slideId: 'new',
+  });
+
+  normalizedPayload.media_path = uploadResult.s3Path;
+  normalizedPayload.media_file_name = file.originalname || null;
+  normalizedPayload.media_storage = 's3';
 
   const createdSlide = await HeroSlide.createHeroSlide(normalizedPayload);
 
@@ -87,6 +113,45 @@ async function updateAdminHeroSlide(rawId, payload, file) {
         success: false,
         message: errors.join('. '),
         errors,
+      },
+    };
+  }
+
+  // Upload new media to S3 when a file was provided
+  if (file && Buffer.isBuffer(file.buffer)) {
+    const uploadResult = await uploadHeroSlideMedia({
+      buffer: file.buffer,
+      mimeType: file.mimetype,
+      originalName: file.originalname,
+      slideId: id,
+    });
+
+    const previousS3Path = existingSlide.media_path || null;
+
+    updates.media_path = uploadResult.s3Path;
+    updates.media_file_name = file.originalname || null;
+    updates.media_storage = 's3';
+
+    const updatedSlide = await HeroSlide.updateHeroSlideById(id, updates);
+
+    if (!updatedSlide) {
+      return {
+        status: 404,
+        body: { success: false, message: 'Hero slide not found' },
+      };
+    }
+
+    // Best-effort cleanup of the previous S3 object
+    if (previousS3Path) {
+      deleteHeroSlideMedia({ s3Path: previousS3Path }).catch(() => {});
+    }
+
+    return {
+      status: 200,
+      body: {
+        success: true,
+        message: 'Hero slide updated successfully',
+        data: attachMediaUrl(updatedSlide),
       },
     };
   }
@@ -192,7 +257,10 @@ async function fetchHeroSlideMedia(rawId, options = {}) {
     };
   }
 
-  if (!media.media_data || media.media_data.length <= 0) {
+  const hasS3 = Boolean(media.media_path);
+  const hasBlob = Buffer.isBuffer(media.media_data) && media.media_data.length > 0;
+
+  if (!hasS3 && !hasBlob) {
     return {
       status: 404,
       body: {
