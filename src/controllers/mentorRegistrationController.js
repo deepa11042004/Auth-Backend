@@ -1,4 +1,5 @@
 const mentorRegistrationService = require('../services/mentorRegistrationService');
+const { streamMentorRegistrationFile } = require('../services/s3StorageService');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -210,6 +211,8 @@ function extensionForMimeType(mimeType) {
 
 function buildMentorPayload(req) {
   const errors = [];
+  const resumeFile = req.files?.resume?.[0] || null;
+  const profilePhotoFile = req.files?.profile_photo?.[0] || null;
 
   const fullName = cleanText(req.body.full_name);
   const email = cleanText(req.body.email).toLowerCase();
@@ -334,8 +337,12 @@ function buildMentorPayload(req) {
       ? priceExtended
       : parseNullableDecimal(honorariumProjectRaw, 'honorarium_project', errors),
     complimentary_session: toBoolean(req.body.complimentary_session, false),
-    resume: req.files?.resume?.[0]?.buffer || null,
-    profile_photo: req.files?.profile_photo?.[0]?.buffer || null,
+    resume: resumeFile?.buffer || null,
+    resume_file_name: resumeFile?.originalname || null,
+    resume_mime_type: resumeFile?.mimetype || null,
+    profile_photo: profilePhotoFile?.buffer || null,
+    profile_photo_file_name: profilePhotoFile?.originalname || null,
+    profile_photo_mime_type: profilePhotoFile?.mimetype || null,
     linkedin_url: toNullableText(req.body.linkedin_url),
     portfolio_url: toNullableText(req.body.portfolio_url),
     has_mentored_before: req.body.has_mentored_before === undefined
@@ -472,13 +479,44 @@ async function sendMentorFile(req, res, options) {
       return res.status(404).json({ error: options.missingMessage });
     }
 
-    const mimeType = options.mimeResolver(result.file);
+    const fileRecord = result.file;
+
+    if (fileRecord.s3Path) {
+      try {
+        const s3File = await streamMentorRegistrationFile({ s3Path: fileRecord.s3Path });
+        const s3MimeType = fileRecord.mimeType || s3File.contentType || 'application/octet-stream';
+        const s3Extension = extensionForMimeType(s3MimeType);
+        const s3FileName = fileRecord.fileName
+          || `mentor-${mentorId}-${options.filenamePrefix}.${s3Extension}`;
+
+        res.set('Content-Type', s3MimeType);
+        res.set('Content-Length', String(s3File.buffer.length));
+        res.set('Content-Disposition', `inline; filename="${s3FileName}"`);
+        res.set('X-Media-Source', 's3');
+
+        return res.status(200).send(s3File.buffer);
+      } catch (s3Err) {
+        if (!fileRecord.blob || fileRecord.storage === 's3') {
+          throw s3Err;
+        }
+      }
+    }
+
+    if (!fileRecord.blob) {
+      return res.status(404).json({ error: options.missingMessage });
+    }
+
+    const mimeType = fileRecord.mimeType || options.mimeResolver(fileRecord.blob);
     const extension = extensionForMimeType(mimeType);
+    const fallbackFileName = fileRecord.fileName
+      || `mentor-${mentorId}-${options.filenamePrefix}.${extension}`;
 
     res.set('Content-Type', mimeType);
-    res.set('Content-Disposition', `inline; filename="mentor-${mentorId}-${options.filenamePrefix}.${extension}"`);
+    res.set('Content-Length', String(fileRecord.blob.length));
+    res.set('Content-Disposition', `inline; filename="${fallbackFileName}"`);
+    res.set('X-Media-Source', 'blob');
 
-    return res.status(200).send(result.file);
+    return res.status(200).send(fileRecord.blob);
   } catch (err) {
     console.error('Mentor file fetch error:', err);
     return res.status(500).json({ error: 'Failed to fetch mentor file' });

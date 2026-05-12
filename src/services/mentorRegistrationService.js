@@ -2,6 +2,10 @@ const crypto = require('crypto');
 const Razorpay = require('razorpay');
 
 const db = require('../config/db');
+const {
+  uploadMentorResume,
+  uploadMentorProfilePhoto,
+} = require('./s3StorageService');
 
 const MENTOR_REGISTRATION_TABLE = 'mentor_registrations';
 const FILE_COLUMNS = new Set(['resume', 'profile_photo']);
@@ -40,6 +44,32 @@ const OPTIONAL_MENTOR_COLUMNS = [
   'payment_status',
   'payment_mode',
 ];
+const MENTOR_FILE_S3_COLUMNS = [
+  'resume_path',
+  'resume_file_name',
+  'resume_mime_type',
+  'resume_storage',
+  'resume_migrated_from_blob',
+  'profile_photo_path',
+  'profile_photo_file_name',
+  'profile_photo_mime_type',
+  'profile_photo_storage',
+  'profile_photo_migrated_from_blob',
+];
+const FILE_COALESCE_COLUMNS = new Set([
+  'resume',
+  'profile_photo',
+  'resume_path',
+  'resume_file_name',
+  'resume_mime_type',
+  'resume_storage',
+  'resume_migrated_from_blob',
+  'profile_photo_path',
+  'profile_photo_file_name',
+  'profile_photo_mime_type',
+  'profile_photo_storage',
+  'profile_photo_migrated_from_blob',
+]);
 const MENTOR_REGISTRATION_BASE_COLUMNS = [
   'full_name',
   'email',
@@ -107,12 +137,6 @@ const BASE_MENTOR_DETAIL_COLUMNS = [
   'mentoring_experience',
   'accepted_guidelines',
   'accepted_code_of_conduct',
-];
-
-const DERIVED_MENTOR_DETAIL_COLUMNS = [
-  '(resume IS NOT NULL) AS has_resume',
-  '(profile_photo IS NOT NULL) AS has_profile_photo',
-  'created_at',
 ];
 
 function cleanText(value) {
@@ -343,9 +367,77 @@ function getMentorWritableColumns(mentorTableColumns) {
     return [...MENTOR_REGISTRATION_BASE_COLUMNS];
   }
 
-  return [...MENTOR_REGISTRATION_BASE_COLUMNS, ...OPTIONAL_MENTOR_COLUMNS].filter((column) =>
+  return [...MENTOR_REGISTRATION_BASE_COLUMNS, ...OPTIONAL_MENTOR_COLUMNS, ...MENTOR_FILE_S3_COLUMNS].filter((column) =>
     mentorTableColumns.has(column)
   );
+}
+
+function hasMentorS3Columns(mentorTableColumns) {
+  if (!mentorTableColumns) {
+    return false;
+  }
+
+  return MENTOR_FILE_S3_COLUMNS.every((column) => mentorTableColumns.has(column));
+}
+
+function normalizeMimeType(value, fallback = 'application/octet-stream') {
+  const normalized = cleanText(value).toLowerCase();
+  return normalized || fallback;
+}
+
+function normalizeFileName(value, fallback) {
+  const normalized = cleanText(value);
+  return normalized || fallback;
+}
+
+async function prepareMentorPayloadBeforePersist(payload, mentorTableColumns) {
+  const nextPayload = {
+    ...payload,
+  };
+
+  if (!hasMentorS3Columns(mentorTableColumns)) {
+    return nextPayload;
+  }
+
+  const normalizedEmail = normalizeEmail(payload?.email);
+
+  if (Buffer.isBuffer(payload?.resume)) {
+    const resumeMimeType = normalizeMimeType(payload?.resume_mime_type);
+    const resumeFileName = normalizeFileName(payload?.resume_file_name, 'mentor-resume');
+    const uploadResult = await uploadMentorResume({
+      buffer: payload.resume,
+      mimeType: resumeMimeType,
+      originalName: resumeFileName,
+      email: normalizedEmail,
+    });
+
+    nextPayload.resume = null;
+    nextPayload.resume_path = uploadResult.s3Path;
+    nextPayload.resume_file_name = resumeFileName;
+    nextPayload.resume_mime_type = resumeMimeType;
+    nextPayload.resume_storage = 's3';
+    nextPayload.resume_migrated_from_blob = 0;
+  }
+
+  if (Buffer.isBuffer(payload?.profile_photo)) {
+    const profilePhotoMimeType = normalizeMimeType(payload?.profile_photo_mime_type);
+    const profilePhotoFileName = normalizeFileName(payload?.profile_photo_file_name, 'mentor-profile-photo');
+    const uploadResult = await uploadMentorProfilePhoto({
+      buffer: payload.profile_photo,
+      mimeType: profilePhotoMimeType,
+      originalName: profilePhotoFileName,
+      email: normalizedEmail,
+    });
+
+    nextPayload.profile_photo = null;
+    nextPayload.profile_photo_path = uploadResult.s3Path;
+    nextPayload.profile_photo_file_name = profilePhotoFileName;
+    nextPayload.profile_photo_mime_type = profilePhotoMimeType;
+    nextPayload.profile_photo_storage = 's3';
+    nextPayload.profile_photo_migrated_from_blob = 0;
+  }
+
+  return nextPayload;
 }
 
 function toBoolean(value) {
@@ -457,6 +549,8 @@ async function getMentorDetailColumns() {
   const mentorTableColumns = await getMentorTableColumns();
   const detailColumns = [...BASE_MENTOR_DETAIL_COLUMNS];
   const insertIndex = detailColumns.indexOf('consultation_fee');
+  const hasResumePathColumn = mentorTableColumns && mentorTableColumns.has('resume_path');
+  const hasProfilePhotoPathColumn = mentorTableColumns && mentorTableColumns.has('profile_photo_path');
 
   const availableOptionalColumns = mentorTableColumns
     ? OPTIONAL_MENTOR_COLUMNS.filter((column) => mentorTableColumns.has(column))
@@ -477,7 +571,17 @@ async function getMentorDetailColumns() {
     detailColumns.splice(insertIndex, 0, ...remainingOptionalColumns);
   }
 
-  return [...detailColumns, ...DERIVED_MENTOR_DETAIL_COLUMNS].join(',\n  ');
+  const derivedColumns = [
+    hasResumePathColumn
+      ? "((resume IS NOT NULL) OR (resume_path IS NOT NULL AND resume_path <> '')) AS has_resume"
+      : '(resume IS NOT NULL) AS has_resume',
+    hasProfilePhotoPathColumn
+      ? "((profile_photo IS NOT NULL) OR (profile_photo_path IS NOT NULL AND profile_photo_path <> '')) AS has_profile_photo"
+      : '(profile_photo IS NOT NULL) AS has_profile_photo',
+    'created_at',
+  ];
+
+  return [...detailColumns, ...derivedColumns].join(',\n  ');
 }
 
 async function findMentorByEmail(email, connection = db) {
@@ -613,7 +717,7 @@ async function updateMentorRegistrationById(connection, mentorId, payload, mento
   }
 
   const assignments = writableColumns.map((column) => {
-    if (column === 'resume' || column === 'profile_photo') {
+    if (FILE_COALESCE_COLUMNS.has(column)) {
       return `${column} = COALESCE(?, ${column})`;
     }
 
@@ -644,10 +748,10 @@ async function upsertMentorRegistration(payload) {
 
     const mentorTableColumns = await getMentorTableColumns();
     const existing = await findMentorByEmail(normalizedEmail, connection);
-    const normalizedPayload = {
+    const normalizedPayload = await prepareMentorPayloadBeforePersist({
       ...payload,
       email: normalizedEmail,
-    };
+    }, mentorTableColumns);
 
     if (existing) {
       if (isCompletedPaymentStatus(existing.payment_status)) {
@@ -1258,21 +1362,62 @@ async function getMentorFileById(id, column) {
     throw new Error('Invalid file column');
   }
 
-  const [rows] = await db.query(
-    `SELECT ${column}
-     FROM ${MENTOR_REGISTRATION_TABLE}
-     WHERE id = ?
-     LIMIT 1`,
-    [id]
-  );
+  const pathColumn = `${column}_path`;
+  const fileNameColumn = `${column}_file_name`;
+  const mimeColumn = `${column}_mime_type`;
+  const storageColumn = `${column}_storage`;
+  let rows;
+
+  try {
+    [rows] = await db.query(
+      `SELECT ${column}, ${pathColumn}, ${fileNameColumn}, ${mimeColumn}, ${storageColumn}
+       FROM ${MENTOR_REGISTRATION_TABLE}
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    );
+  } catch (err) {
+    if (!err || err.code !== 'ER_BAD_FIELD_ERROR') {
+      throw err;
+    }
+
+    [rows] = await db.query(
+      `SELECT ${column}
+       FROM ${MENTOR_REGISTRATION_TABLE}
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    );
+  }
 
   if (rows.length === 0) {
     return { found: false, file: null };
   }
 
+  const row = rows[0] || {};
+  const blob = row[column] || null;
+  const s3Path = typeof row[pathColumn] === 'string' && row[pathColumn].trim()
+    ? row[pathColumn].trim()
+    : null;
+  const fileName = typeof row[fileNameColumn] === 'string' && row[fileNameColumn].trim()
+    ? row[fileNameColumn].trim()
+    : null;
+  const mimeType = typeof row[mimeColumn] === 'string' && row[mimeColumn].trim()
+    ? row[mimeColumn].trim()
+    : null;
+  const storage = typeof row[storageColumn] === 'string' && row[storageColumn].trim()
+    ? row[storageColumn].trim().toLowerCase()
+    : 'blob';
+
   return {
     found: true,
-    file: rows[0][column] || null,
+    file: {
+      blob,
+      s3Path,
+      fileName,
+      mimeType,
+      storage,
+    },
   };
 }
 
