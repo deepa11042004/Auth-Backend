@@ -17,16 +17,25 @@ CREATE TABLE IF NOT EXISTS mou_requests (
   supporting_document_data LONGBLOB NULL,
   supporting_document_mime VARCHAR(120) NULL,
   supporting_document_size INT NULL,
+  supporting_document_path VARCHAR(1024) NULL,
+  supporting_document_storage ENUM('blob', 's3', 'hybrid') NOT NULL DEFAULT 'blob',
+  migrated_from_blob TINYINT(1) NOT NULL DEFAULT 0,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_mou_requests_created_at (created_at),
   INDEX idx_mou_requests_official_email (official_email),
-  INDEX idx_mou_requests_submission_type (submission_type)
+  INDEX idx_mou_requests_submission_type (submission_type),
+  INDEX idx_mou_requests_supporting_document_path (supporting_document_path(191))
 );
 
 -- If table already exists from older schema, run this once:
 -- ALTER TABLE mou_requests
 -- ADD COLUMN supporting_document_data LONGBLOB NULL AFTER supporting_document_name;
+-- ALTER TABLE mou_requests
+-- ADD COLUMN supporting_document_path VARCHAR(1024) NULL AFTER supporting_document_size,
+-- ADD COLUMN supporting_document_storage ENUM('blob', 's3', 'hybrid') NOT NULL DEFAULT 'blob' AFTER supporting_document_path,
+-- ADD COLUMN migrated_from_blob TINYINT(1) NOT NULL DEFAULT 0 AFTER supporting_document_storage,
+-- ADD INDEX idx_mou_requests_supporting_document_path (supporting_document_path(191));
 
 -- Helpful admin query
 -- SELECT * FROM mou_requests ORDER BY created_at DESC;

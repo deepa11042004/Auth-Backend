@@ -2,6 +2,7 @@ const db = require('../config/db');
 
 const MOU_REQUEST_TABLE = 'mou_requests';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ALLOWED_STORAGE_TYPES = new Set(['blob', 's3', 'hybrid']);
 
 function cleanText(value) {
   if (Array.isArray(value)) {
@@ -42,6 +43,11 @@ function formatDateTime(value) {
   return asString || null;
 }
 
+function normalizeStorageType(value, fallback = 'blob') {
+  const normalized = cleanText(value).toLowerCase();
+  return ALLOWED_STORAGE_TYPES.has(normalized) ? normalized : fallback;
+}
+
 function normalizeMouRequestPayload(input = {}, options = {}) {
   const file = options.file && typeof options.file === 'object' ? options.file : null;
   const supportingDocumentBuffer = file && Buffer.isBuffer(file.buffer) ? file.buffer : null;
@@ -62,6 +68,12 @@ function normalizeMouRequestPayload(input = {}, options = {}) {
     supporting_document_data: supportingDocumentBuffer,
     supporting_document_mime: toNullableText(file ? file.mimetype : null),
     supporting_document_size: toNullableInteger(file ? file.size : null),
+    supporting_document_path: toNullableText(input.supporting_document_path),
+    supporting_document_storage: normalizeStorageType(
+      input.supporting_document_storage,
+      supportingDocumentBuffer ? 'blob' : 'blob',
+    ),
+    migrated_from_blob: Number(input.migrated_from_blob) === 1 ? 1 : 0,
   };
 
   const errors = [];
@@ -134,11 +146,15 @@ async function ensureMouRequestTable(connection = db) {
       supporting_document_data LONGBLOB NULL,
       supporting_document_mime VARCHAR(120) NULL,
       supporting_document_size INT NULL,
+      supporting_document_path VARCHAR(1024) NULL,
+      supporting_document_storage ENUM('blob', 's3', 'hybrid') NOT NULL DEFAULT 'blob',
+      migrated_from_blob TINYINT(1) NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_mou_requests_created_at (created_at),
       INDEX idx_mou_requests_official_email (official_email),
-      INDEX idx_mou_requests_submission_type (submission_type)
+      INDEX idx_mou_requests_submission_type (submission_type),
+      INDEX idx_mou_requests_supporting_document_path (supporting_document_path(191))
     )`
   );
 
@@ -150,6 +166,55 @@ async function ensureMouRequestTable(connection = db) {
     await connection.query(
       `ALTER TABLE ${MOU_REQUEST_TABLE}
        ADD COLUMN supporting_document_data LONGBLOB NULL AFTER supporting_document_name`
+    );
+  }
+
+  const [supportingDocumentPathColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${MOU_REQUEST_TABLE} LIKE 'supporting_document_path'`
+  );
+
+  if (supportingDocumentPathColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${MOU_REQUEST_TABLE}
+       ADD COLUMN supporting_document_path VARCHAR(1024) NULL
+       AFTER supporting_document_size`
+    );
+  }
+
+  const [supportingDocumentStorageColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${MOU_REQUEST_TABLE} LIKE 'supporting_document_storage'`
+  );
+
+  if (supportingDocumentStorageColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${MOU_REQUEST_TABLE}
+       ADD COLUMN supporting_document_storage ENUM('blob', 's3', 'hybrid')
+       NOT NULL DEFAULT 'blob'
+       AFTER supporting_document_path`
+    );
+  }
+
+  const [migratedFromBlobColumn] = await connection.query(
+    `SHOW COLUMNS FROM ${MOU_REQUEST_TABLE} LIKE 'migrated_from_blob'`
+  );
+
+  if (migratedFromBlobColumn.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${MOU_REQUEST_TABLE}
+       ADD COLUMN migrated_from_blob TINYINT(1)
+       NOT NULL DEFAULT 0
+       AFTER supporting_document_storage`
+    );
+  }
+
+  const [supportingDocumentPathIndex] = await connection.query(
+    `SHOW INDEX FROM ${MOU_REQUEST_TABLE} WHERE Key_name = 'idx_mou_requests_supporting_document_path'`
+  );
+
+  if (supportingDocumentPathIndex.length === 0) {
+    await connection.query(
+      `ALTER TABLE ${MOU_REQUEST_TABLE}
+       ADD INDEX idx_mou_requests_supporting_document_path (supporting_document_path(191))`
     );
   }
 }
@@ -169,6 +234,9 @@ function mapMouRequestRow(row) {
     supporting_document_name: cleanText(row.supporting_document_name) || null,
     supporting_document_mime: cleanText(row.supporting_document_mime) || null,
     supporting_document_size: toNullableInteger(row.supporting_document_size),
+    supporting_document_path: cleanText(row.supporting_document_path) || null,
+    supporting_document_storage: normalizeStorageType(row.supporting_document_storage),
+    migrated_from_blob: Number(row.migrated_from_blob) === 1,
     created_at: formatDateTime(row.created_at),
     updated_at: formatDateTime(row.updated_at),
   };
@@ -189,6 +257,9 @@ async function createMouRequest(payload, connection = db) {
     'supporting_document_data',
     'supporting_document_mime',
     'supporting_document_size',
+    'supporting_document_path',
+    'supporting_document_storage',
+    'migrated_from_blob',
   ];
 
   const values = [
@@ -205,6 +276,9 @@ async function createMouRequest(payload, connection = db) {
     payload.supporting_document_data,
     payload.supporting_document_mime,
     payload.supporting_document_size,
+    payload.supporting_document_path,
+    normalizeStorageType(payload.supporting_document_storage),
+    Number(payload.migrated_from_blob) === 1 ? 1 : 0,
   ];
 
   const placeholders = columns.map(() => '?').join(', ');
@@ -231,6 +305,9 @@ async function createMouRequest(payload, connection = db) {
             supporting_document_name,
             supporting_document_mime,
             supporting_document_size,
+            supporting_document_path,
+            supporting_document_storage,
+            migrated_from_blob,
             created_at,
             updated_at
      FROM ${MOU_REQUEST_TABLE}
@@ -257,6 +334,9 @@ async function getMouRequests(connection = db) {
             supporting_document_name,
             supporting_document_mime,
             supporting_document_size,
+            supporting_document_path,
+            supporting_document_storage,
+            migrated_from_blob,
             created_at,
             updated_at
      FROM ${MOU_REQUEST_TABLE}
@@ -272,7 +352,10 @@ async function getMouRequestDocumentById(id, connection = db) {
             supporting_document_name,
             supporting_document_mime,
             supporting_document_size,
-            supporting_document_data
+                 supporting_document_data,
+                 supporting_document_path,
+                 supporting_document_storage,
+                 migrated_from_blob
      FROM ${MOU_REQUEST_TABLE}
      WHERE id = ?
      LIMIT 1`,
@@ -290,10 +373,69 @@ async function getMouRequestDocumentById(id, connection = db) {
     supporting_document_name: cleanText(row.supporting_document_name) || null,
     supporting_document_mime: cleanText(row.supporting_document_mime) || null,
     supporting_document_size: toNullableInteger(row.supporting_document_size),
+    supporting_document_path: cleanText(row.supporting_document_path) || null,
+    supporting_document_storage: normalizeStorageType(row.supporting_document_storage),
+    migrated_from_blob: Number(row.migrated_from_blob) === 1,
     supporting_document_data: Buffer.isBuffer(row.supporting_document_data)
       ? row.supporting_document_data
       : null,
   };
+}
+
+async function updateMouRequestDocumentStorage(id, updates = {}, connection = db) {
+  const columns = [];
+  const values = [];
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_name')) {
+    columns.push('supporting_document_name = ?');
+    values.push(toNullableText(updates.supporting_document_name));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_mime')) {
+    columns.push('supporting_document_mime = ?');
+    values.push(toNullableText(updates.supporting_document_mime));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_size')) {
+    columns.push('supporting_document_size = ?');
+    values.push(toNullableInteger(updates.supporting_document_size));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_data')) {
+    columns.push('supporting_document_data = ?');
+    values.push(Buffer.isBuffer(updates.supporting_document_data) ? updates.supporting_document_data : null);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_path')) {
+    columns.push('supporting_document_path = ?');
+    values.push(toNullableText(updates.supporting_document_path));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_storage')) {
+    columns.push('supporting_document_storage = ?');
+    values.push(normalizeStorageType(updates.supporting_document_storage));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'migrated_from_blob')) {
+    columns.push('migrated_from_blob = ?');
+    values.push(Number(updates.migrated_from_blob) === 1 ? 1 : 0);
+  }
+
+  if (columns.length === 0) {
+    return false;
+  }
+
+  values.push(id);
+
+  const [result] = await connection.query(
+    `UPDATE ${MOU_REQUEST_TABLE}
+     SET ${columns.join(', ')}
+     WHERE id = ?
+     LIMIT 1`,
+    values,
+  );
+
+  return Number(result.affectedRows) > 0;
 }
 
 async function deleteMouRequest(id, connection = db) {
@@ -314,5 +456,6 @@ module.exports = {
   createMouRequest,
   getMouRequests,
   getMouRequestDocumentById,
+  updateMouRequestDocumentStorage,
   deleteMouRequest,
 };
