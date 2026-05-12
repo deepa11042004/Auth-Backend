@@ -40,6 +40,7 @@ async function createWorkshop(req, res) {
 
     if (thumbnailBuffer) {
       payload.thumbnail = thumbnailBuffer;
+      payload.thumbnail_original_name = thumbnailFile.originalname;
     }
 
     if (certificateBuffer) {
@@ -90,6 +91,7 @@ async function updateWorkshop(req, res) {
 
     if (thumbnailBuffer) {
       payload.thumbnail = thumbnailBuffer;
+      payload.thumbnail_original_name = thumbnailFile.originalname;
     }
 
     if (certificateBuffer) {
@@ -160,7 +162,7 @@ async function getWorkshopThumbnail(req, res) {
     const result = await workshopListService.getWorkshopImageById(req.params.id, 'thumbnail');
 
     if (result.image) {
-      res.set('Content-Type', 'image/webp');
+      res.set('Content-Type', result.contentType || 'image/webp');
       return res.status(200).send(result.image);
     }
 
@@ -182,7 +184,7 @@ async function getWorkshopCertificate(req, res) {
     );
 
     if (result.image) {
-      res.set('Content-Type', 'image/webp');
+      res.set('Content-Type', result.contentType || 'image/webp');
       return res.status(200).send(result.image);
     }
 

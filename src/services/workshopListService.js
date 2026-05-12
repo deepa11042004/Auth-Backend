@@ -1,4 +1,9 @@
 const db = require('../config/db');
+const {
+  uploadWorkshopThumbnail,
+  streamWorkshopThumbnail,
+  deleteWorkshopThumbnail,
+} = require('./s3StorageService');
 
 const WORKSHOP_LIST_TABLE = 'workshop_list';
 const TOTAL_ENROLLMENTS_COLUMN = 'total_enrollments';
@@ -154,11 +159,23 @@ function buildWorkshopImageUrl(id, type) {
   return `/api/workshop-list/${id}/${type}`;
 }
 
+function resolveWorkshopThumbnailUrl(row, id) {
+  const hasManagedThumbnail = Boolean(row.thumbnail_path) || Boolean(row.thumbnail);
+
+  if (hasManagedThumbnail) {
+    return buildWorkshopImageUrl(id, 'thumbnail');
+  }
+
+  if (row.thumbnail_url) {
+    return String(row.thumbnail_url);
+  }
+
+  return null;
+}
+
 function mapWorkshopRow(row) {
   const id = Number(row.id);
-  const thumbnailUrl = row.thumbnail_url
-    ? String(row.thumbnail_url)
-    : (row.thumbnail ? buildWorkshopImageUrl(id, 'thumbnail') : null);
+  const thumbnailUrl = resolveWorkshopThumbnailUrl(row, id);
   const certificateUrl = row.certificate_url
     ? String(row.certificate_url)
     : (row.certificate_file ? buildWorkshopImageUrl(id, 'certificate') : null);
@@ -184,12 +201,16 @@ function mapWorkshopRow(row) {
     registered_count: Number.isFinite(registeredCount) ? registeredCount : 0,
     thumbnail_url: thumbnailUrl,
     certificate_url: certificateUrl,
-    has_thumbnail: Boolean(row.thumbnail),
+    has_thumbnail: Boolean(row.thumbnail) || Boolean(row.thumbnail_path),
     has_certificate_file: Boolean(row.certificate_file),
   };
 }
 
-function buildWorkshopListQuery(registeredCountExpression) {
+function buildWorkshopListQuery(registeredCountExpression, includeThumbnailS3Columns = true) {
+  const thumbnailS3Columns = includeThumbnailS3Columns
+    ? 'wl.thumbnail_path,\n      wl.thumbnail_file_name,\n      wl.thumbnail_storage,\n      wl.thumbnail_migrated_from_blob,'
+    : '';
+
   return `SELECT
       wl.id,
       wl.title,
@@ -207,13 +228,18 @@ function buildWorkshopListQuery(registeredCountExpression) {
       wl.thumbnail,
       wl.certificate_url,
       wl.certificate_file,
+      ${thumbnailS3Columns}
       ${registeredCountExpression} AS total_enrollments,
       ${registeredCountExpression} AS registered_count
     FROM ${WORKSHOP_LIST_TABLE} wl
     ORDER BY wl.id DESC`;
 }
 
-function buildWorkshopByIdQuery(registeredCountExpression) {
+function buildWorkshopByIdQuery(registeredCountExpression, includeThumbnailS3Columns = true) {
+  const thumbnailS3Columns = includeThumbnailS3Columns
+    ? 'wl.thumbnail_path,\n      wl.thumbnail_file_name,\n      wl.thumbnail_storage,\n      wl.thumbnail_migrated_from_blob,'
+    : '';
+
   return `SELECT
       wl.id,
       wl.title,
@@ -231,6 +257,7 @@ function buildWorkshopByIdQuery(registeredCountExpression) {
       wl.thumbnail,
       wl.certificate_url,
       wl.certificate_file,
+      ${thumbnailS3Columns}
       ${registeredCountExpression} AS total_enrollments,
       ${registeredCountExpression} AS registered_count
     FROM ${WORKSHOP_LIST_TABLE} wl
@@ -256,15 +283,18 @@ function buildAllParticipantsQuery(includeCreatedAt = true) {
 async function getWorkshopRowById(id, connection = db) {
   try {
     const [rows] = await connection.query(
-      buildWorkshopByIdQuery(`COALESCE(wl.${TOTAL_ENROLLMENTS_COLUMN}, 0)`),
+      buildWorkshopByIdQuery(`COALESCE(wl.${TOTAL_ENROLLMENTS_COLUMN}, 0)`, true),
       [id]
     );
 
     return rows[0] || null;
   } catch (err) {
     if (err && err.code === 'ER_BAD_FIELD_ERROR') {
-      const [rows] = await connection.query(buildWorkshopByIdQuery('0'), [id]);
-      return rows[0] || null;
+      const [rows] = await connection.query(
+        buildWorkshopByIdQuery('0', false),
+        [id]
+      );
+      return rows[0] ? { ...rows[0], thumbnail_path: null } : null;
     }
 
     throw err;
@@ -274,15 +304,15 @@ async function getWorkshopRowById(id, connection = db) {
 async function getWorkshopList() {
   try {
     const [rows] = await db.query(
-      buildWorkshopListQuery(`COALESCE(wl.${TOTAL_ENROLLMENTS_COLUMN}, 0)`)
+      buildWorkshopListQuery(`COALESCE(wl.${TOTAL_ENROLLMENTS_COLUMN}, 0)`, true)
     );
 
     return rows.map(mapWorkshopRow);
   } catch (err) {
     // If migration is not yet applied, return 0 so existing features keep working.
     if (err && err.code === 'ER_BAD_FIELD_ERROR') {
-      const [rows] = await db.query(buildWorkshopListQuery('0'));
-      return rows.map(mapWorkshopRow);
+      const [rows] = await db.query(buildWorkshopListQuery('0', false));
+      return rows.map((row) => mapWorkshopRow({ ...row, thumbnail_path: null }));
     }
 
     throw err;
@@ -380,10 +410,31 @@ async function createWorkshop(payload) {
 
   const thumbnailUrlValid = isValidUrlOrPath(thumbnailUrl);
   const certificateUrlValid = isValidUrlOrPath(certificateUrl);
-  const storedThumbnailUrl = thumbnailBuffer ? (thumbnailUrlValid ? thumbnailUrl : null) : thumbnailUrl;
+  const storedThumbnailUrl = thumbnailBuffer ? null : thumbnailUrl;
   const storedCertificateUrl = certificateBuffer
     ? (certificateUrlValid ? certificateUrl : null)
     : certificateUrl;
+
+  let thumbnailPath = null;
+  let thumbnailFileName = null;
+  let thumbnailStorage = 'blob';
+  let thumbnailMigratedFromBlob = 0;
+
+  if (thumbnailBuffer) {
+    const thumbnailOriginalName = toNullableText(payload.thumbnail_original_name) || 'thumbnail.webp';
+    const uploadResult = await uploadWorkshopThumbnail({
+      buffer: thumbnailBuffer,
+      mimeType: 'image/webp',
+      originalName: thumbnailOriginalName,
+      workshopId: 'new',
+      workshopTitle: title,
+    });
+
+    thumbnailPath = uploadResult.s3Path;
+    thumbnailFileName = thumbnailOriginalName;
+    thumbnailStorage = 's3';
+    thumbnailMigratedFromBlob = 0;
+  }
 
   if (!thumbnailBuffer && !thumbnailUrlValid) {
     return failedResponse(400);
@@ -406,10 +457,14 @@ async function createWorkshop(payload) {
       certificate,
       fee,
       thumbnail_url,
+      thumbnail_path,
+      thumbnail_file_name,
+      thumbnail_storage,
+      thumbnail_migrated_from_blob,
       thumbnail,
       certificate_url,
       certificate_file
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       title,
       description,
@@ -422,7 +477,11 @@ async function createWorkshop(payload) {
       certificate,
       fee,
       storedThumbnailUrl,
-      thumbnailBuffer,
+      thumbnailPath,
+      thumbnailFileName,
+      thumbnailStorage,
+      thumbnailMigratedFromBlob,
+      null,
       storedCertificateUrl,
       certificateBuffer,
     ]
@@ -588,8 +647,33 @@ async function updateWorkshop(workshopId, payload) {
   }
 
   if (Buffer.isBuffer(payload.thumbnail)) {
+    const thumbnailOriginalName = toNullableText(payload.thumbnail_original_name) || 'thumbnail.webp';
+    const uploadResult = await uploadWorkshopThumbnail({
+      buffer: payload.thumbnail,
+      mimeType: 'image/webp',
+      originalName: thumbnailOriginalName,
+      workshopId: String(id),
+      workshopTitle: existingRow.title || payload.title || 'workshop',
+    });
+
+    const previousS3Path = toNullableText(existingRow.thumbnail_path);
+
+    updates.push('thumbnail_url = ?');
+    values.push(null);
+    updates.push('thumbnail_path = ?');
+    values.push(uploadResult.s3Path);
+    updates.push('thumbnail_file_name = ?');
+    values.push(thumbnailOriginalName);
+    updates.push('thumbnail_storage = ?');
+    values.push('s3');
+    updates.push('thumbnail_migrated_from_blob = ?');
+    values.push(0);
     updates.push('thumbnail = ?');
-    values.push(payload.thumbnail);
+    values.push(null);
+
+    if (previousS3Path) {
+      deleteWorkshopThumbnail({ s3Path: previousS3Path }).catch(() => {});
+    }
   }
 
   if (Buffer.isBuffer(payload.certificate_file)) {
@@ -676,6 +760,10 @@ async function deleteWorkshop(workshopId) {
     }
 
     await connection.commit();
+
+    if (workshopRow.thumbnail_path) {
+      deleteWorkshopThumbnail({ s3Path: workshopRow.thumbnail_path }).catch(() => {});
+    }
 
     return {
       status: 200,
@@ -838,6 +926,65 @@ async function getWorkshopImageById(workshopId, column) {
     };
   }
 
+  if (column === 'thumbnail') {
+    const [rows] = await db.query(
+      `SELECT
+         thumbnail AS image,
+         thumbnail_path,
+         thumbnail_storage,
+         thumbnail_migrated_from_blob
+       FROM ${WORKSHOP_LIST_TABLE}
+       WHERE id = ?
+       LIMIT 1`,
+      [id]
+    );
+
+    const row = rows[0];
+    if (!row) {
+      return {
+        status: 404,
+        body: {
+          success: false,
+          message: 'Workshop image not found',
+        },
+      };
+    }
+
+    if (row.thumbnail_path) {
+      try {
+        const streamResult = await streamWorkshopThumbnail({ s3Path: row.thumbnail_path });
+        return {
+          status: 200,
+          image: streamResult.buffer,
+          contentType: streamResult.contentType,
+        };
+      } catch (s3Err) {
+        const isHybrid = row.thumbnail_storage === 'hybrid'
+          || Number(row.thumbnail_migrated_from_blob) === 1;
+
+        if (!isHybrid) {
+          throw s3Err;
+        }
+      }
+    }
+
+    if (!row.image) {
+      return {
+        status: 404,
+        body: {
+          success: false,
+          message: 'Workshop image not found',
+        },
+      };
+    }
+
+    return {
+      status: 200,
+      image: row.image,
+      contentType: 'image/webp',
+    };
+  }
+
   const [rows] = await db.query(
     `SELECT ${column} AS image FROM ${WORKSHOP_LIST_TABLE} WHERE id = ? LIMIT 1`,
     [id]
@@ -856,6 +1003,7 @@ async function getWorkshopImageById(workshopId, column) {
   return {
     status: 200,
     image: rows[0].image,
+    contentType: 'image/webp',
   };
 }
 
