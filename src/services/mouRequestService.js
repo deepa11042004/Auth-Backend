@@ -36,7 +36,6 @@ async function submitMouRequest(payload, file) {
   const hasFile = !!(file && Buffer.isBuffer(file.buffer) && file.buffer.length > 0);
 
   if (hasFile) {
-    normalizedPayload.supporting_document_data = null;
     normalizedPayload.supporting_document_path = null;
     normalizedPayload.supporting_document_storage = 's3';
     normalizedPayload.migrated_from_blob = 0;
@@ -57,7 +56,6 @@ async function submitMouRequest(payload, file) {
         supporting_document_name: file.originalname,
         supporting_document_mime: file.mimetype,
         supporting_document_size: file.size,
-        supporting_document_data: null,
         supporting_document_path: uploadResult.s3Path,
         supporting_document_storage: 's3',
         migrated_from_blob: 0,
@@ -172,36 +170,7 @@ async function fetchMouRequestDocument(rawId) {
     };
   }
 
-  if (document.supporting_document_path) {
-    try {
-      const streamed = await streamMouSupportingDocument({
-        s3Path: document.supporting_document_path,
-      });
-
-      return {
-        status: 200,
-        body: {
-          success: true,
-          message: 'MoU supporting document fetched successfully',
-        },
-        document: {
-          ...document,
-          supporting_document_data: streamed.buffer,
-          supporting_document_mime: document.supporting_document_mime || streamed.contentType,
-          supporting_document_size: document.supporting_document_size
-            || (Number.isFinite(streamed.contentLength) ? Number(streamed.contentLength) : streamed.buffer.length),
-          served_from: 's3',
-        },
-      };
-    } catch (err) {
-      // Keep legacy documents accessible while S3 backfill stabilizes.
-      console.warn(
-        `MoU document S3 fetch failed for id=${id}, path=${document.supporting_document_path}: ${err.message || err}`,
-      );
-    }
-  }
-
-  if (!document.supporting_document_data || document.supporting_document_data.length <= 0) {
+  if (!document.supporting_document_path) {
     return {
       status: 404,
       body: {
@@ -212,17 +181,39 @@ async function fetchMouRequestDocument(rawId) {
     };
   }
 
-  return {
-    status: 200,
-    body: {
-      success: true,
-      message: 'MoU supporting document fetched successfully',
-    },
-    document: {
-      ...document,
-      served_from: 'blob',
-    },
-  };
+  try {
+    const streamed = await streamMouSupportingDocument({
+      s3Path: document.supporting_document_path,
+    });
+
+    return {
+      status: 200,
+      body: {
+        success: true,
+        message: 'MoU supporting document fetched successfully',
+      },
+      document: {
+        ...document,
+        document_buffer: streamed.buffer,
+        supporting_document_mime: document.supporting_document_mime || streamed.contentType,
+        supporting_document_size: document.supporting_document_size
+          || (Number.isFinite(streamed.contentLength) ? Number(streamed.contentLength) : streamed.buffer.length),
+        served_from: 's3',
+      },
+    };
+  } catch (err) {
+    console.warn(
+      `MoU document S3 fetch failed for id=${id}, path=${document.supporting_document_path}: ${err.message || err}`,
+    );
+    return {
+      status: 502,
+      body: {
+        success: false,
+        message: 'Failed to fetch supporting document from storage',
+      },
+      document: null,
+    };
+  }
 }
 
 module.exports = {

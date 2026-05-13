@@ -6,7 +6,6 @@
   "scripts": {
     "start": "node server.js",
     "migrate:internship-photos": "node scripts/migrate-internship-passport-photos-to-s3.js",
-    "migrate:mou-supporting-documents": "node scripts/migrate-mou-supporting-documents-to-s3.js",
     "migrate:workshop-thumbnails": "node scripts/migrate-workshop-thumbnails-to-s3.js"
   },
   "dependencies": {

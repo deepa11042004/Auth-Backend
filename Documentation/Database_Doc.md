@@ -187,8 +187,9 @@ Purpose: Tracking Memorandum of Understanding (MOU) partnerships.
 |---|---|---|---|
 | `id` | INT | PRIMARY KEY | Unique ID. |
 | `institution_name` | VARCHAR(255) | NOT NULL | Name of institution. |
-| `supporting_document_data`| LONGBLOB | NULL | Uploaded proposal PDF/DOC. |
+| `supporting_document_path`| VARCHAR(1024) | NULL | S3 object path for proposal PDF/DOC. |
 | `supporting_document_mime`| VARCHAR(120) | NULL | Document type. |
+| `supporting_document_storage`| ENUM('s3','hybrid') | NOT NULL | Active storage mode; runtime serves from S3. |
 
 #### `mentor_registrations`
 Purpose: Onboarding data for industry mentors.

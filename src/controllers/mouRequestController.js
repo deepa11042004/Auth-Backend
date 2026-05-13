@@ -53,13 +53,13 @@ async function downloadMouRequestDocument(req, res, next) {
     const contentLength = Number.isFinite(result.document.supporting_document_size)
       && result.document.supporting_document_size > 0
       ? result.document.supporting_document_size
-      : result.document.supporting_document_data.length;
+      : result.document.document_buffer.length;
 
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Length', String(contentLength));
 
-    return res.status(200).send(result.document.supporting_document_data);
+    return res.status(200).send(result.document.document_buffer);
   } catch (err) {
     return next(err);
   }

@@ -2,7 +2,7 @@ const db = require('../config/db');
 
 const MOU_REQUEST_TABLE = 'mou_requests';
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const ALLOWED_STORAGE_TYPES = new Set(['blob', 's3', 'hybrid']);
+const ALLOWED_STORAGE_TYPES = new Set(['s3', 'hybrid']);
 
 function cleanText(value) {
   if (Array.isArray(value)) {
@@ -43,14 +43,13 @@ function formatDateTime(value) {
   return asString || null;
 }
 
-function normalizeStorageType(value, fallback = 'blob') {
+function normalizeStorageType(value, fallback = 's3') {
   const normalized = cleanText(value).toLowerCase();
   return ALLOWED_STORAGE_TYPES.has(normalized) ? normalized : fallback;
 }
 
 function normalizeMouRequestPayload(input = {}, options = {}) {
   const file = options.file && typeof options.file === 'object' ? options.file : null;
-  const supportingDocumentBuffer = file && Buffer.isBuffer(file.buffer) ? file.buffer : null;
 
   const payload = {
     institution_name: cleanText(input.institution_name || input.institutionName),
@@ -65,14 +64,10 @@ function normalizeMouRequestPayload(input = {}, options = {}) {
       cleanText(input.submission_type || input.submissionType || 'mou_proposal')
       || 'mou_proposal',
     supporting_document_name: toNullableText(file ? file.originalname : null),
-    supporting_document_data: supportingDocumentBuffer,
     supporting_document_mime: toNullableText(file ? file.mimetype : null),
     supporting_document_size: toNullableInteger(file ? file.size : null),
     supporting_document_path: toNullableText(input.supporting_document_path),
-    supporting_document_storage: normalizeStorageType(
-      input.supporting_document_storage,
-      supportingDocumentBuffer ? 'blob' : 'blob',
-    ),
+    supporting_document_storage: normalizeStorageType(input.supporting_document_storage, 's3'),
     migrated_from_blob: Number(input.migrated_from_blob) === 1 ? 1 : 0,
   };
 
@@ -143,11 +138,10 @@ async function ensureMouRequestTable(connection = db) {
       proposal_purpose TEXT NOT NULL,
       submission_type VARCHAR(80) NOT NULL DEFAULT 'mou_proposal',
       supporting_document_name VARCHAR(255) NULL,
-      supporting_document_data LONGBLOB NULL,
       supporting_document_mime VARCHAR(120) NULL,
       supporting_document_size INT NULL,
       supporting_document_path VARCHAR(1024) NULL,
-      supporting_document_storage ENUM('blob', 's3', 'hybrid') NOT NULL DEFAULT 'blob',
+      supporting_document_storage ENUM('s3', 'hybrid') NOT NULL DEFAULT 's3',
       migrated_from_blob TINYINT(1) NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -157,17 +151,6 @@ async function ensureMouRequestTable(connection = db) {
       INDEX idx_mou_requests_supporting_document_path (supporting_document_path(191))
     )`
   );
-
-  const [supportingDocumentDataColumn] = await connection.query(
-    `SHOW COLUMNS FROM ${MOU_REQUEST_TABLE} LIKE 'supporting_document_data'`
-  );
-
-  if (supportingDocumentDataColumn.length === 0) {
-    await connection.query(
-      `ALTER TABLE ${MOU_REQUEST_TABLE}
-       ADD COLUMN supporting_document_data LONGBLOB NULL AFTER supporting_document_name`
-    );
-  }
 
   const [supportingDocumentPathColumn] = await connection.query(
     `SHOW COLUMNS FROM ${MOU_REQUEST_TABLE} LIKE 'supporting_document_path'`
@@ -188,8 +171,8 @@ async function ensureMouRequestTable(connection = db) {
   if (supportingDocumentStorageColumn.length === 0) {
     await connection.query(
       `ALTER TABLE ${MOU_REQUEST_TABLE}
-       ADD COLUMN supporting_document_storage ENUM('blob', 's3', 'hybrid')
-       NOT NULL DEFAULT 'blob'
+       ADD COLUMN supporting_document_storage ENUM('s3', 'hybrid')
+       NOT NULL DEFAULT 's3'
        AFTER supporting_document_path`
     );
   }
@@ -254,7 +237,6 @@ async function createMouRequest(payload, connection = db) {
     'proposal_purpose',
     'submission_type',
     'supporting_document_name',
-    'supporting_document_data',
     'supporting_document_mime',
     'supporting_document_size',
     'supporting_document_path',
@@ -273,7 +255,6 @@ async function createMouRequest(payload, connection = db) {
     payload.proposal_purpose,
     payload.submission_type,
     payload.supporting_document_name,
-    payload.supporting_document_data,
     payload.supporting_document_mime,
     payload.supporting_document_size,
     payload.supporting_document_path,
@@ -352,10 +333,9 @@ async function getMouRequestDocumentById(id, connection = db) {
             supporting_document_name,
             supporting_document_mime,
             supporting_document_size,
-                 supporting_document_data,
-                 supporting_document_path,
-                 supporting_document_storage,
-                 migrated_from_blob
+          supporting_document_path,
+          supporting_document_storage,
+          migrated_from_blob
      FROM ${MOU_REQUEST_TABLE}
      WHERE id = ?
      LIMIT 1`,
@@ -376,9 +356,6 @@ async function getMouRequestDocumentById(id, connection = db) {
     supporting_document_path: cleanText(row.supporting_document_path) || null,
     supporting_document_storage: normalizeStorageType(row.supporting_document_storage),
     migrated_from_blob: Number(row.migrated_from_blob) === 1,
-    supporting_document_data: Buffer.isBuffer(row.supporting_document_data)
-      ? row.supporting_document_data
-      : null,
   };
 }
 
@@ -399,11 +376,6 @@ async function updateMouRequestDocumentStorage(id, updates = {}, connection = db
   if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_size')) {
     columns.push('supporting_document_size = ?');
     values.push(toNullableInteger(updates.supporting_document_size));
-  }
-
-  if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_data')) {
-    columns.push('supporting_document_data = ?');
-    values.push(Buffer.isBuffer(updates.supporting_document_data) ? updates.supporting_document_data : null);
   }
 
   if (Object.prototype.hasOwnProperty.call(updates, 'supporting_document_path')) {
