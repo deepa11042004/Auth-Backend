@@ -257,10 +257,7 @@ async function fetchHeroSlideMedia(rawId, options = {}) {
     };
   }
 
-  const hasS3 = Boolean(media.media_path);
-  const hasBlob = Buffer.isBuffer(media.media_data) && media.media_data.length > 0;
-
-  if (!hasS3 && !hasBlob) {
+  if (!media.media_path) {
     return {
       status: 404,
       body: {

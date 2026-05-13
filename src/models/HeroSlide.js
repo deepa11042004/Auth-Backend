@@ -135,7 +135,6 @@ function formatDateTime(value) {
 function normalizeHeroSlidePayload(input = {}, options = {}) {
   const file = options.file && typeof options.file === 'object' ? options.file : null;
   const mediaType = normalizeMediaType(input.media_type || input.mediaType, file);
-  const mediaData = file && Buffer.isBuffer(file.buffer) ? file.buffer : null;
   const mediaMimeType = toNullableText(file ? file.mimetype : null);
 
   // media_data intentionally excluded — service uploads to S3 and sets media_path
@@ -336,8 +335,11 @@ async function ensureHeroSlidesTable(connection = db) {
       description TEXT NULL,
       badge_text VARCHAR(120) NULL,
       media_type ENUM('image', 'video') NOT NULL,
-      media_data LONGBLOB NOT NULL,
       media_mime_type VARCHAR(120) NOT NULL,
+      media_path VARCHAR(1024) NULL,
+      media_file_name VARCHAR(255) NULL,
+      media_storage ENUM('blob', 's3', 'hybrid') NOT NULL DEFAULT 'blob',
+      migrated_from_blob TINYINT(1) NOT NULL DEFAULT 0,
       cta_text VARCHAR(255) NULL,
       cta_link TEXT NULL,
       secondary_cta_text VARCHAR(255) NULL,
@@ -369,7 +371,6 @@ async function ensureHeroSlidesTable(connection = db) {
     `ALTER TABLE ${HERO_SLIDE_TABLE}
      MODIFY COLUMN title VARCHAR(255) NULL,
      MODIFY COLUMN media_type ENUM('image', 'video') NULL,
-     MODIFY COLUMN media_data LONGBLOB NULL,
      MODIFY COLUMN media_mime_type VARCHAR(120) NULL,
      MODIFY COLUMN position INT NULL DEFAULT NULL`
   );
@@ -438,7 +439,6 @@ async function createHeroSlide(payload, connection = db) {
     'description',
     'badge_text',
     'media_type',
-    'media_data',
     'media_mime_type',
     'media_path',
     'media_file_name',
@@ -457,7 +457,6 @@ async function createHeroSlide(payload, connection = db) {
     payload.description,
     payload.badge_text,
     payload.media_type,
-    null, // media_data — always NULL for new S3 uploads
     payload.media_mime_type,
     payload.media_path || null,
     payload.media_file_name || null,
@@ -549,7 +548,7 @@ async function getHeroSlides(options = {}, connection = db) {
        FROM ${HERO_SLIDE_TABLE}
        WHERE is_active = 1
          AND media_type IN ('image', 'video')
-         AND (media_data IS NOT NULL OR media_path IS NOT NULL)
+         AND media_path IS NOT NULL
          AND media_mime_type IS NOT NULL
        ORDER BY position ASC, id ASC`
     )
@@ -579,12 +578,9 @@ async function getHeroSlides(options = {}, connection = db) {
 async function getHeroSlideMediaById(id, connection = db) {
   const [rows] = await connection.query(
     `SELECT id,
-            media_data,
             media_mime_type,
             media_type,
             media_path,
-            media_storage,
-            migrated_from_blob,
             is_active
      FROM ${HERO_SLIDE_TABLE}
      WHERE id = ?
@@ -599,12 +595,9 @@ async function getHeroSlideMediaById(id, connection = db) {
 
   return {
     id: Number(row.id),
-    media_data: Buffer.isBuffer(row.media_data) ? row.media_data : null,
     media_mime_type: toNullableText(row.media_mime_type),
     media_type: cleanText(row.media_type),
     media_path: toNullableText(row.media_path),
-    media_storage: cleanText(row.media_storage) || 'blob',
-    migrated_from_blob: Number(row.migrated_from_blob) === 1,
     is_active: Number(row.is_active) === 1,
   };
 }
