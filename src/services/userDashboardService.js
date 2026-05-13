@@ -95,27 +95,9 @@ function normalizePaymentStatus(value) {
 }
 
 function resolveWorkshopThumbnail(row, workshopId) {
-  const hasManagedThumbnail = Boolean(row.thumbnail_path) || Boolean(row.thumbnail);
+  const hasManagedThumbnail = Boolean(row.thumbnail_path);
   if (hasManagedThumbnail) {
     return `/api/workshop-list/${workshopId}/thumbnail`;
-  }
-
-  const thumbnailUrl = toNullableText(row.thumbnail_url);
-  if (thumbnailUrl) {
-    return thumbnailUrl;
-  }
-
-  return null;
-}
-
-function resolveWorkshopCertificate(row, workshopId) {
-  const certificateUrl = toNullableText(row.certificate_url);
-  if (certificateUrl) {
-    return certificateUrl;
-  }
-
-  if (row.certificate_file) {
-    return `/api/workshop-list/${workshopId}/certificate`;
   }
 
   return null;
@@ -211,7 +193,7 @@ async function getWorkshopById(workshopId, connection = db) {
   }
 
   const [rows] = await connection.query(
-    `SELECT id, title, fee, thumbnail_url, thumbnail_path, thumbnail, certificate, certificate_url, certificate_file
+    `SELECT id, title, fee, thumbnail_path, certificate
      FROM ${WORKSHOP_LIST_TABLE}
      WHERE id = ?
      LIMIT 1`,
@@ -271,7 +253,7 @@ function mapWorkshopSummaryRow(row) {
     continue_url: `/workshops/${workshopId}`,
     thumbnail_url: resolveWorkshopThumbnail(row, workshopId),
     certificate_available: Number(row.certificate || 0) === 1,
-    certificate_url: resolveWorkshopCertificate(row, workshopId),
+    certificate_url: null,
   };
 }
 
@@ -298,12 +280,8 @@ function buildWorkshopRowsQuery(options = {}) {
         wr.created_at AS enrolled_at,
         wl.title AS workshop_title,
         wl.description AS workshop_description,
-        wl.thumbnail_url,
         wl.thumbnail_path,
-        wl.thumbnail,
         wl.certificate,
-        wl.certificate_url,
-        wl.certificate_file,
         uwp.progress_percent,
         uwp.modules_completed,
         uwp.modules_total,
@@ -378,7 +356,7 @@ async function getRecommendedWorkshops(excludedWorkshopIds = [], connection = db
     .map((id) => toPositiveInt(id))
     .filter((id) => Number.isInteger(id));
 
-  let query = `SELECT id, title, description, mode, workshop_date, fee, thumbnail_url, thumbnail_path, thumbnail
+  let query = `SELECT id, title, description, mode, workshop_date, fee, thumbnail_path
                FROM ${WORKSHOP_LIST_TABLE}`;
   const params = [];
 
@@ -643,9 +621,7 @@ async function getWishlist(userId) {
       wl.mode,
       wl.workshop_date,
       wl.fee,
-      wl.thumbnail_url,
-      wl.thumbnail_path,
-      wl.thumbnail
+      wl.thumbnail_path
      FROM ${WISHLIST_TABLE} w
      LEFT JOIN ${WORKSHOP_LIST_TABLE} wl ON wl.id = w.workshop_id
      WHERE w.user_id = ?

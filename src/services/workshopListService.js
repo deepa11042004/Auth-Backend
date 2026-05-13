@@ -10,7 +10,7 @@ const TOTAL_ENROLLMENTS_COLUMN = 'total_enrollments';
 const REGISTRATION_TABLE = 'workshop_registrations';
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/;
-const IMAGE_COLUMNS = new Set(['thumbnail', 'certificate_file']);
+const IMAGE_COLUMNS = new Set(['thumbnail']);
 
 function cleanText(value) {
   if (Array.isArray(value)) {
@@ -160,14 +160,10 @@ function buildWorkshopImageUrl(id, type) {
 }
 
 function resolveWorkshopThumbnailUrl(row, id) {
-  const hasManagedThumbnail = Boolean(row.thumbnail_path) || Boolean(row.thumbnail);
+  const hasManagedThumbnail = Boolean(row.thumbnail_path);
 
   if (hasManagedThumbnail) {
     return buildWorkshopImageUrl(id, 'thumbnail');
-  }
-
-  if (row.thumbnail_url) {
-    return String(row.thumbnail_url);
   }
 
   return null;
@@ -176,9 +172,6 @@ function resolveWorkshopThumbnailUrl(row, id) {
 function mapWorkshopRow(row) {
   const id = Number(row.id);
   const thumbnailUrl = resolveWorkshopThumbnailUrl(row, id);
-  const certificateUrl = row.certificate_url
-    ? String(row.certificate_url)
-    : (row.certificate_file ? buildWorkshopImageUrl(id, 'certificate') : null);
   const registeredCount = Number(row.registered_count);
   const totalEnrollments = Number(row.total_enrollments);
 
@@ -200,15 +193,15 @@ function mapWorkshopRow(row) {
       : (Number.isFinite(registeredCount) ? registeredCount : 0),
     registered_count: Number.isFinite(registeredCount) ? registeredCount : 0,
     thumbnail_url: thumbnailUrl,
-    certificate_url: certificateUrl,
-    has_thumbnail: Boolean(row.thumbnail) || Boolean(row.thumbnail_path),
-    has_certificate_file: Boolean(row.certificate_file),
+    certificate_url: null,
+    has_thumbnail: Boolean(row.thumbnail_path),
+    has_certificate_file: false,
   };
 }
 
 function buildWorkshopListQuery(registeredCountExpression, includeThumbnailS3Columns = true) {
   const thumbnailS3Columns = includeThumbnailS3Columns
-    ? 'wl.thumbnail_path,\n      wl.thumbnail_file_name,\n      wl.thumbnail_storage,\n      wl.thumbnail_migrated_from_blob,'
+    ? 'wl.thumbnail_path,\n      wl.thumbnail_file_name,\n      wl.thumbnail_storage,'
     : '';
 
   return `SELECT
@@ -224,10 +217,6 @@ function buildWorkshopListQuery(registeredCountExpression, includeThumbnailS3Col
       wl.certificate,
       wl.fee,
       wl.created_at,
-      wl.thumbnail_url,
-      wl.thumbnail,
-      wl.certificate_url,
-      wl.certificate_file,
       ${thumbnailS3Columns}
       ${registeredCountExpression} AS total_enrollments,
       ${registeredCountExpression} AS registered_count
@@ -237,7 +226,7 @@ function buildWorkshopListQuery(registeredCountExpression, includeThumbnailS3Col
 
 function buildWorkshopByIdQuery(registeredCountExpression, includeThumbnailS3Columns = true) {
   const thumbnailS3Columns = includeThumbnailS3Columns
-    ? 'wl.thumbnail_path,\n      wl.thumbnail_file_name,\n      wl.thumbnail_storage,\n      wl.thumbnail_migrated_from_blob,'
+    ? 'wl.thumbnail_path,\n      wl.thumbnail_file_name,\n      wl.thumbnail_storage,'
     : '';
 
   return `SELECT
@@ -253,10 +242,6 @@ function buildWorkshopByIdQuery(registeredCountExpression, includeThumbnailS3Col
       wl.certificate,
       wl.fee,
       wl.created_at,
-      wl.thumbnail_url,
-      wl.thumbnail,
-      wl.certificate_url,
-      wl.certificate_file,
       ${thumbnailS3Columns}
       ${registeredCountExpression} AS total_enrollments,
       ${registeredCountExpression} AS registered_count
@@ -385,12 +370,7 @@ async function createWorkshop(payload) {
   const duration = toNullableText(payload.duration);
   const certificate = toBoolean(payload.certificate, true) ? 1 : 0;
   const fee = toNullableFee(payload.fee);
-  const thumbnailUrl = toNullableText(payload.thumbnail_url);
-  const certificateUrl = toNullableText(payload.certificate_url);
   const thumbnailBuffer = Buffer.isBuffer(payload.thumbnail) ? payload.thumbnail : null;
-  const certificateBuffer = Buffer.isBuffer(payload.certificate_file)
-    ? payload.certificate_file
-    : null;
 
   if (!title) {
     return failedResponse(400);
@@ -408,17 +388,9 @@ async function createWorkshop(payload) {
     return failedResponse(400);
   }
 
-  const thumbnailUrlValid = isValidUrlOrPath(thumbnailUrl);
-  const certificateUrlValid = isValidUrlOrPath(certificateUrl);
-  const storedThumbnailUrl = thumbnailBuffer ? null : thumbnailUrl;
-  const storedCertificateUrl = certificateBuffer
-    ? (certificateUrlValid ? certificateUrl : null)
-    : certificateUrl;
-
   let thumbnailPath = null;
   let thumbnailFileName = null;
-  let thumbnailStorage = 'blob';
-  let thumbnailMigratedFromBlob = 0;
+  let thumbnailStorage = 's3';
 
   if (thumbnailBuffer) {
     const thumbnailOriginalName = toNullableText(payload.thumbnail_original_name) || 'thumbnail.webp';
@@ -433,14 +405,9 @@ async function createWorkshop(payload) {
     thumbnailPath = uploadResult.s3Path;
     thumbnailFileName = thumbnailOriginalName;
     thumbnailStorage = 's3';
-    thumbnailMigratedFromBlob = 0;
   }
 
-  if (!thumbnailBuffer && !thumbnailUrlValid) {
-    return failedResponse(400);
-  }
-
-  if (!certificateBuffer && !certificateUrlValid) {
+  if (!thumbnailBuffer) {
     return failedResponse(400);
   }
 
@@ -456,15 +423,10 @@ async function createWorkshop(payload) {
       duration,
       certificate,
       fee,
-      thumbnail_url,
       thumbnail_path,
       thumbnail_file_name,
-      thumbnail_storage,
-      thumbnail_migrated_from_blob,
-      thumbnail,
-      certificate_url,
-      certificate_file
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      thumbnail_storage
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
     [
       title,
       description,
@@ -476,14 +438,9 @@ async function createWorkshop(payload) {
       duration,
       certificate,
       fee,
-      storedThumbnailUrl,
       thumbnailPath,
       thumbnailFileName,
       thumbnailStorage,
-      thumbnailMigratedFromBlob,
-      null,
-      storedCertificateUrl,
-      certificateBuffer,
     ]
   );
 
@@ -626,26 +583,6 @@ async function updateWorkshop(workshopId, payload) {
     values.push(fee);
   }
 
-  if (payload.thumbnail_url !== undefined) {
-    const thumbnailUrl = toNullableText(payload.thumbnail_url);
-    if (!isValidUrlOrPath(thumbnailUrl)) {
-      return failedResponse(400);
-    }
-
-    updates.push('thumbnail_url = ?');
-    values.push(thumbnailUrl);
-  }
-
-  if (payload.certificate_url !== undefined) {
-    const certificateUrl = toNullableText(payload.certificate_url);
-    if (!isValidUrlOrPath(certificateUrl)) {
-      return failedResponse(400);
-    }
-
-    updates.push('certificate_url = ?');
-    values.push(certificateUrl);
-  }
-
   if (Buffer.isBuffer(payload.thumbnail)) {
     const thumbnailOriginalName = toNullableText(payload.thumbnail_original_name) || 'thumbnail.webp';
     const uploadResult = await uploadWorkshopThumbnail({
@@ -658,27 +595,16 @@ async function updateWorkshop(workshopId, payload) {
 
     const previousS3Path = toNullableText(existingRow.thumbnail_path);
 
-    updates.push('thumbnail_url = ?');
-    values.push(null);
     updates.push('thumbnail_path = ?');
     values.push(uploadResult.s3Path);
     updates.push('thumbnail_file_name = ?');
     values.push(thumbnailOriginalName);
     updates.push('thumbnail_storage = ?');
     values.push('s3');
-    updates.push('thumbnail_migrated_from_blob = ?');
-    values.push(0);
-    updates.push('thumbnail = ?');
-    values.push(null);
 
     if (previousS3Path) {
       deleteWorkshopThumbnail({ s3Path: previousS3Path }).catch(() => {});
     }
-  }
-
-  if (Buffer.isBuffer(payload.certificate_file)) {
-    updates.push('certificate_file = ?');
-    values.push(payload.certificate_file);
   }
 
   if (!updates.length) {
@@ -929,10 +855,7 @@ async function getWorkshopImageById(workshopId, column) {
   if (column === 'thumbnail') {
     const [rows] = await db.query(
       `SELECT
-         thumbnail AS image,
-         thumbnail_path,
-         thumbnail_storage,
-         thumbnail_migrated_from_blob
+         thumbnail_path
        FROM ${WORKSHOP_LIST_TABLE}
        WHERE id = ?
        LIMIT 1`,
@@ -951,46 +874,14 @@ async function getWorkshopImageById(workshopId, column) {
     }
 
     if (row.thumbnail_path) {
-      try {
-        const streamResult = await streamWorkshopThumbnail({ s3Path: row.thumbnail_path });
-        return {
-          status: 200,
-          image: streamResult.buffer,
-          contentType: streamResult.contentType,
-        };
-      } catch (s3Err) {
-        const isHybrid = row.thumbnail_storage === 'hybrid'
-          || Number(row.thumbnail_migrated_from_blob) === 1;
-
-        if (!isHybrid) {
-          throw s3Err;
-        }
-      }
-    }
-
-    if (!row.image) {
+      const streamResult = await streamWorkshopThumbnail({ s3Path: row.thumbnail_path });
       return {
-        status: 404,
-        body: {
-          success: false,
-          message: 'Workshop image not found',
-        },
+        status: 200,
+        image: streamResult.buffer,
+        contentType: streamResult.contentType,
       };
     }
 
-    return {
-      status: 200,
-      image: row.image,
-      contentType: 'image/webp',
-    };
-  }
-
-  const [rows] = await db.query(
-    `SELECT ${column} AS image FROM ${WORKSHOP_LIST_TABLE} WHERE id = ? LIMIT 1`,
-    [id]
-  );
-
-  if (!rows[0] || !rows[0].image) {
     return {
       status: 404,
       body: {
@@ -1001,9 +892,11 @@ async function getWorkshopImageById(workshopId, column) {
   }
 
   return {
-    status: 200,
-    image: rows[0].image,
-    contentType: 'image/webp',
+    status: 404,
+    body: {
+      success: false,
+      message: 'Workshop image not found',
+    },
   };
 }
 

@@ -66,10 +66,6 @@ router.get('/workshop-list/list', workshopListController.getWorkshopList);
  *                 type: boolean
  *               fee:
  *                 type: number
- *               thumbnail_url:
- *                 type: string
- *               certificate_url:
- *                 type: string
  *         multipart/form-data:
  *           schema:
  *             type: object
@@ -101,14 +97,6 @@ router.get('/workshop-list/list', workshopListController.getWorkshopList);
  *               thumbnail:
  *                 type: string
  *                 format: binary
- *               certificate_file:
- *                 type: string
- *                 format: binary
- *                 description: Certificate image file (certificate field is also accepted as an alias).
- *               thumbnail_url:
- *                 type: string
- *               certificate_url:
- *                 type: string
  *     responses:
  *       201:
  *         description: Workshop created successfully
@@ -143,29 +131,6 @@ router.delete(
  *               format: binary
  */
 router.get('/workshop-list/:id/thumbnail', workshopListController.getWorkshopThumbnail);
-
-/**
- * @openapi
- * /api/workshop-list/{id}/certificate:
- *   get:
- *     tags: [Workshops]
- *     summary: Fetch a workshop certificate image
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: integer
- *     responses:
- *       200:
- *         description: Certificate image (webp)
- *         content:
- *           image/webp:
- *             schema:
- *               type: string
- *               format: binary
- */
-router.get('/workshop-list/:id/certificate', workshopListController.getWorkshopCertificate);
 
 router.get('/workshop-list/:id', workshopListController.getWorkshopById);
 router.put('/workshop-list/:id', uploadWorkshopImages, workshopListController.updateWorkshop);

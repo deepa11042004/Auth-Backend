@@ -11,7 +11,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: MAX_IMAGE_BYTES,
-    files: 2,
+    files: 1,
   },
   fileFilter: (req, file, cb) => {
     if (!ALLOWED_IMAGE_MIME_TYPES.has(file.mimetype)) {
@@ -26,8 +26,6 @@ const upload = multer({
 function uploadWorkshopImages(req, res, next) {
   const handler = upload.fields([
     { name: 'thumbnail', maxCount: 1 },
-    { name: 'certificate', maxCount: 1 },
-    { name: 'certificate_file', maxCount: 1 },
   ]);
 
   handler(req, res, (err) => {
@@ -46,14 +44,14 @@ function uploadWorkshopImages(req, res, next) {
       if (err.code === 'LIMIT_UNEXPECTED_FILE') {
         return res.status(400).json({
           success: false,
-          message: 'Unexpected file field. Use thumbnail or certificate (certificate_file alias allowed).',
+          message: 'Unexpected file field. Use thumbnail only.',
         });
       }
 
       if (err.code === 'LIMIT_FILE_COUNT') {
         return res.status(400).json({
           success: false,
-          message: 'Too many files uploaded. Provide at most one thumbnail and one certificate.',
+          message: 'Too many files uploaded. Provide at most one thumbnail.',
         });
       }
 

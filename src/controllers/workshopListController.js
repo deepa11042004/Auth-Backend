@@ -31,20 +31,12 @@ async function createWorkshop(req, res) {
   try {
     const payload = { ...(req.body || {}) };
     const thumbnailFile = req.files?.thumbnail?.[0];
-    const certificateFile = req.files?.certificate?.[0] || req.files?.certificate_file?.[0];
 
-    const [thumbnailBuffer, certificateBuffer] = await Promise.all([
-      thumbnailFile ? processImageToWebp(thumbnailFile.buffer) : null,
-      certificateFile ? processImageToWebp(certificateFile.buffer) : null,
-    ]);
+    const thumbnailBuffer = thumbnailFile ? await processImageToWebp(thumbnailFile.buffer) : null;
 
     if (thumbnailBuffer) {
       payload.thumbnail = thumbnailBuffer;
       payload.thumbnail_original_name = thumbnailFile.originalname;
-    }
-
-    if (certificateBuffer) {
-      payload.certificate_file = certificateBuffer;
     }
 
     const result = await workshopListService.createWorkshop(payload);
@@ -82,20 +74,12 @@ async function updateWorkshop(req, res) {
   try {
     const payload = { ...(req.body || {}) };
     const thumbnailFile = req.files?.thumbnail?.[0];
-    const certificateFile = req.files?.certificate?.[0] || req.files?.certificate_file?.[0];
 
-    const [thumbnailBuffer, certificateBuffer] = await Promise.all([
-      thumbnailFile ? processImageToWebp(thumbnailFile.buffer) : null,
-      certificateFile ? processImageToWebp(certificateFile.buffer) : null,
-    ]);
+    const thumbnailBuffer = thumbnailFile ? await processImageToWebp(thumbnailFile.buffer) : null;
 
     if (thumbnailBuffer) {
       payload.thumbnail = thumbnailBuffer;
       payload.thumbnail_original_name = thumbnailFile.originalname;
-    }
-
-    if (certificateBuffer) {
-      payload.certificate_file = certificateBuffer;
     }
 
     const result = await workshopListService.updateWorkshop(req.params.id, payload);
@@ -176,28 +160,6 @@ async function getWorkshopThumbnail(req, res) {
   }
 }
 
-async function getWorkshopCertificate(req, res) {
-  try {
-    const result = await workshopListService.getWorkshopImageById(
-      req.params.id,
-      'certificate_file'
-    );
-
-    if (result.image) {
-      res.set('Content-Type', result.contentType || 'image/webp');
-      return res.status(200).send(result.image);
-    }
-
-    return res.status(result.status).json(result.body);
-  } catch (err) {
-    console.error('Workshop certificate fetch error:', err);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to fetch workshop certificate',
-    });
-  }
-}
-
 module.exports = {
   getWorkshopList,
   getAllParticipants,
@@ -208,5 +170,4 @@ module.exports = {
   deleteWorkshopParticipant,
   getWorkshopParticipants,
   getWorkshopThumbnail,
-  getWorkshopCertificate,
 };
