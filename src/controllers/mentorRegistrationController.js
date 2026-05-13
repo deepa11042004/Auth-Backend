@@ -338,11 +338,11 @@ function buildMentorPayload(req) {
       : parseNullableDecimal(honorariumProjectRaw, 'honorarium_project', errors),
     complimentary_session: toBoolean(req.body.complimentary_session, false),
     resume: resumeFile?.buffer || null,
-    resume_file_name: resumeFile?.originalname || null,
     resume_mime_type: resumeFile?.mimetype || null,
+    resume_file_name: resumeFile?.originalname || null,
     profile_photo: profilePhotoFile?.buffer || null,
-    profile_photo_file_name: profilePhotoFile?.originalname || null,
     profile_photo_mime_type: profilePhotoFile?.mimetype || null,
+    profile_photo_file_name: profilePhotoFile?.originalname || null,
     linkedin_url: toNullableText(req.body.linkedin_url),
     portfolio_url: toNullableText(req.body.portfolio_url),
     has_mentored_before: req.body.has_mentored_before === undefined
@@ -481,42 +481,16 @@ async function sendMentorFile(req, res, options) {
 
     const fileRecord = result.file;
 
-    if (fileRecord.s3Path) {
-      try {
-        const s3File = await streamMentorRegistrationFile({ s3Path: fileRecord.s3Path });
-        const s3MimeType = fileRecord.mimeType || s3File.contentType || 'application/octet-stream';
-        const s3Extension = extensionForMimeType(s3MimeType);
-        const s3FileName = fileRecord.fileName
-          || `mentor-${mentorId}-${options.filenamePrefix}.${s3Extension}`;
-
-        res.set('Content-Type', s3MimeType);
-        res.set('Content-Length', String(s3File.buffer.length));
-        res.set('Content-Disposition', `inline; filename="${s3FileName}"`);
-        res.set('X-Media-Source', 's3');
-
-        return res.status(200).send(s3File.buffer);
-      } catch (s3Err) {
-        if (!fileRecord.blob || fileRecord.storage === 's3') {
-          throw s3Err;
-        }
-      }
-    }
-
-    if (!fileRecord.blob) {
-      return res.status(404).json({ error: options.missingMessage });
-    }
-
-    const mimeType = fileRecord.mimeType || options.mimeResolver(fileRecord.blob);
+    const s3File = await streamMentorRegistrationFile({ s3Path: fileRecord.s3Path });
+    const mimeType = s3File.contentType || 'application/octet-stream';
     const extension = extensionForMimeType(mimeType);
-    const fallbackFileName = fileRecord.fileName
-      || `mentor-${mentorId}-${options.filenamePrefix}.${extension}`;
 
     res.set('Content-Type', mimeType);
-    res.set('Content-Length', String(fileRecord.blob.length));
-    res.set('Content-Disposition', `inline; filename="${fallbackFileName}"`);
-    res.set('X-Media-Source', 'blob');
+    res.set('Content-Length', String(s3File.buffer.length));
+    res.set('Content-Disposition', `inline; filename="mentor-${mentorId}-${options.filenamePrefix}.${extension}"`);
+    res.set('X-Media-Source', 's3');
 
-    return res.status(200).send(fileRecord.blob);
+    return res.status(200).send(s3File.buffer);
   } catch (err) {
     console.error('Mentor file fetch error:', err);
     return res.status(500).json({ error: 'Failed to fetch mentor file' });
@@ -528,7 +502,6 @@ async function getMentorResume(req, res) {
     column: 'resume',
     filenamePrefix: 'resume',
     missingMessage: 'Resume not found for this mentor.',
-    mimeResolver: detectResumeMimeType,
   });
 }
 
@@ -537,7 +510,6 @@ async function getMentorProfilePhoto(req, res) {
     column: 'profile_photo',
     filenamePrefix: 'profile-photo',
     missingMessage: 'Profile photo not found for this mentor.',
-    mimeResolver: detectImageMimeType,
   });
 }
 
