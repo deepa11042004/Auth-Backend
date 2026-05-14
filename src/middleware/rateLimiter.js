@@ -26,13 +26,13 @@ const rateLimit = require('express-rate-limit');
 // This is generous enough for normal users browsing / interacting with the
 // frontend, but will catch automated scrapers and accidental request loops.
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,       // 15 minutes
+  windowMs: 10 * 60 * 1000,       // 10 minutes
   max: 100,                        // limit each IP to 100 requests per window
   standardHeaders: true,           // Return rate limit info in `RateLimit-*` headers (draft-6)
   legacyHeaders: false,            // Disable `X-RateLimit-*` headers
   message: {
     success: false,
-    error: 'Too many requests from this IP, please try again after 15 minutes.',
+    error: 'Too many requests from this IP, please try again after 10 minutes.',
   },
   // Skip rate limiting for requests that aren't from external clients
   // (e.g. health-check probes within the same machine / VPC).
@@ -42,17 +42,17 @@ const apiLimiter = rateLimit({
 // ---------------------------------------------------------------------------
 // 2. Strict auth limiter  (login, register, OTP, password reset)
 // ---------------------------------------------------------------------------
-// 15 requests per 15-minute window per IP.
+// 15 requests per 10-minute window per IP.
 // Auth endpoints are the primary brute-force targets; a much tighter cap
 // dramatically raises the cost of credential-stuffing attacks.
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,       // 15 minutes
+  windowMs: 10 * 60 * 1000,       // 10 minutes
   max: 50,                         // limit each IP to 50 requests per window
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     success: false,
-    error: 'Too many authentication attempts from this IP, please try again after 15 minutes.',
+    error: 'Too many authentication attempts from this IP, please try again after 10 minutes.',
   },
 });
 
