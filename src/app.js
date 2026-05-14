@@ -19,8 +19,14 @@ const ticketRoutes = require('./routes/ticketRoutes');
 const userDashboardRoutes = require('./routes/userDashboardRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const swaggerSpec = require('./config/swagger');
+const { apiLimiter, authLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
+
+// ── Reverse-proxy / load-balancer support ────────────────────────────────
+// Required so express-rate-limit reads the real client IP from
+// X-Forwarded-For instead of the proxy's IP (Nginx, ALB, CloudFront, etc.).
+app.set('trust proxy', 1);
 
 app.use(cors());
 app.use(express.json({
@@ -41,6 +47,13 @@ app.get('/api-docs.json', (req, res) => {
 
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
+// ── Rate limiting ────────────────────────────────────────────────────────
+// Strict limiter on auth-sensitive routes (login, register, OTP, password reset)
+app.use('/auth', authLimiter);
+// General limiter applied once – covers every /api/* and /api/user-dashboard/* route
+app.use('/api', apiLimiter);
+
+// ── Route registration ───────────────────────────────────────────────────
 app.use('/auth', authRoutes);
 app.use('/api', workshopRoutes);
 app.use('/api', workshopListRoutes);
@@ -59,3 +72,4 @@ app.use('/api/user-dashboard', userDashboardRoutes);
 app.use(errorHandler);
 
 module.exports = app;
+
