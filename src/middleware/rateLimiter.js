@@ -47,7 +47,7 @@ const apiLimiter = rateLimit({
 // dramatically raises the cost of credential-stuffing attacks.
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,       // 15 minutes
-  max: 20,                         // limit each IP to 20 requests per window
+  max: 50,                         // limit each IP to 50 requests per window
   standardHeaders: true,
   legacyHeaders: false,
   message: {
