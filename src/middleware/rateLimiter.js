@@ -27,7 +27,7 @@ const rateLimit = require('express-rate-limit');
 // frontend, but will catch automated scrapers and accidental request loops.
 const apiLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,       // 10 minutes
-  max: 100,                        // limit each IP to 100 requests per window
+  max: 1000,                        // limit each IP to 1000 requests per window
   standardHeaders: true,           // Return rate limit info in `RateLimit-*` headers (draft-6)
   legacyHeaders: false,            // Disable `X-RateLimit-*` headers
   message: {
